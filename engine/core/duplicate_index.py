@@ -7,47 +7,46 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Load duplicate index
 # ---------------------------------------------------------------------------
-def load_duplicate_index(path: str) -> DefaultDict[str, List[Dict[str, str]]]:
+def load_duplicate_index(duplicate_index_path: str) -> DefaultDict[str, List[Dict[str, str]]]:
     """
     Load the global duplicate index from CSV.
     Returns a dict: key → list of rows with that key.
     """
-    index: DefaultDict[str, List[Dict[str, str]]] = defaultdict(list)
+    duplicate_index: DefaultDict[str, List[Dict[str, str]]] = defaultdict(list)
 
-    if not os.path.exists(path):
-        return index
+    if not os.path.exists(duplicate_index_path):
+        return duplicate_index
 
-    with open(path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            # Key extraction is done by process_csv via csv_model.extract_key
-            # but we re‑extract here for safety.
-            key = (row.get("BANKREFERENTIE") or "").strip()
+    with open(duplicate_index_path, newline="", encoding="utf-8") as index_file:
+        index_reader = csv.DictReader(index_file)
+
+        for index_row in index_reader:
+            key = (index_row.get("BANKREFERENTIE") or "").strip()
             if key:
-                index[key].append(row)
+                duplicate_index[key].append(index_row)
 
-    return index
+    return duplicate_index
 
 
 # ---------------------------------------------------------------------------
 # Append new rows to duplicate index
 # ---------------------------------------------------------------------------
-def append_to_duplicate_index(path: str, rows: List[Dict[str, str]]) -> None:
+def append_to_duplicate_index(duplicate_index_path: str, new_rows: List[Dict[str, str]]) -> None:
     """
     Append transformed rows to the global duplicate index.
     Creates the file with header if it does not exist.
     """
-    if not rows:
+    if not new_rows:
         return
 
-    file_exists = os.path.exists(path)
-    fieldnames = list(rows[0].keys())
+    file_exists = os.path.exists(duplicate_index_path)
+    fieldnames = list(new_rows[0].keys())
 
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+    with open(duplicate_index_path, "a", newline="", encoding="utf-8") as index_file:
+        index_writer = csv.DictWriter(index_file, fieldnames=fieldnames)
 
         if not file_exists:
-            writer.writeheader()
+            index_writer.writeheader()
 
-        for row in rows:
-            writer.writerow(row)
+        for new_row in new_rows:
+            index_writer.writerow(new_row)

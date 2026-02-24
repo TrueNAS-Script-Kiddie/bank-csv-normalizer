@@ -18,99 +18,114 @@ from core.duplicate_index import (
     append_to_duplicate_index,
 )
 
+# -------------------------------------------------------------------------
+# Directory configuration (module-level constants)
+# -------------------------------------------------------------------------
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 
-def log_event(logfile: str, message: str) -> None:
+INCOMING_DIR = os.path.join(DATA_DIR, "incoming")
+PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
+FAILED_DIR = os.path.join(DATA_DIR, "failed")
+NORMALIZED_DIR = os.path.join(DATA_DIR, "normalized")
+TEMP_DIR = os.path.join(DATA_DIR, "temp")
+DUPLICATE_INDEX_DIR = os.path.join(DATA_DIR, "duplicate-index")
+
+DUPLICATE_INDEX_PATH = os.path.join(DUPLICATE_INDEX_DIR, "duplicate-index.csv")
+
+
+# -------------------------------------------------------------------------
+# Logging
+# -------------------------------------------------------------------------
+def log_event(logfile_path: str, message: str) -> None:
     """Append timestamped log entry."""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(logfile, "a", encoding="utf-8") as f:
-        f.write(f"{ts} {message}\n")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(logfile_path, "a", encoding="utf-8") as log_file:
+        log_file.write(f"{timestamp} {message}\n")
 
 
-def main():
-    # -------------------------------------------------------------------------
+# -------------------------------------------------------------------------
+# Main
+# -------------------------------------------------------------------------
+def main() -> None:
+    # ---------------------------------------------------------------------
     # Arguments
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     if len(sys.argv) != 4:
         print("Usage: process_csv.py <csv_path> <run_timestamp> <logfile_path>")
         sys.exit(1)
 
-    csv_path = sys.argv[1]
-    run_ts = sys.argv[2]
-    logfile = sys.argv[3]
-    csv_filename = os.path.basename(csv_path)
+    csv_file_path = sys.argv[1]
+    run_timestamp = sys.argv[2]
+    logfile_path = sys.argv[3]
+    csv_filename = os.path.basename(csv_file_path)
 
-    # -------------------------------------------------------------------------
-    # Directory structure (relative to BASE_DIR)
-    # -------------------------------------------------------------------------
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    DATA_DIR = os.path.join(BASE_DIR, "data")
+    # ---------------------------------------------------------------------
+    # Ensure required directories exist
+    # ---------------------------------------------------------------------
+    os.makedirs(PROCESSED_DIR, exist_ok=True)
+    os.makedirs(FAILED_DIR, exist_ok=True)
+    os.makedirs(NORMALIZED_DIR, exist_ok=True)
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    os.makedirs(DUPLICATE_INDEX_DIR, exist_ok=True)
 
-    DIR_INCOMING = os.path.join(DATA_DIR, "incoming")
-    DIR_PROCESSED = os.path.join(DATA_DIR, "processed")
-    DIR_FAILED = os.path.join(DATA_DIR, "failed")
-    DIR_NORMALIZED = os.path.join(DATA_DIR, "normalized")
-    DIR_TEMP = os.path.join(DATA_DIR, "temp")
-    DIR_DUP = os.path.join(DATA_DIR, "duplicate-index")
-
-    DUP_INDEX_PATH = os.path.join(DIR_DUP, "duplicate-index.csv")
-
-    # TEMP must exist only during runtime
-    os.makedirs(DIR_TEMP, exist_ok=True)
-
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     # Load CSV
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     try:
-        rows = load_csv_rows(csv_path)
-        log_event(logfile, f"Loaded {len(rows)} rows")
-    except Exception as e:
-        log_event(logfile, f"ERROR loading CSV: {e}")
+        csv_rows = load_csv_rows(csv_file_path)
+        log_event(logfile_path, f"Loaded {len(csv_rows)} rows")
+    except Exception as exception:
+        log_event(logfile_path, f"ERROR loading CSV: {exception}")
+        traceback_str = traceback.format_exc()
+        log_event(logfile_path, f"TRACEBACK:\n{traceback_str}")
         sys.exit(1)
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     # Validate structure
-    # -------------------------------------------------------------------------
-    if not validate_csv_structure(rows):
-        log_event(logfile, "CSV structure/content check FAILED")
+    # ---------------------------------------------------------------------
+    if not validate_csv_structure(csv_rows):
+        log_event(logfile_path, "CSV structure/content check FAILED")
 
-        target = os.path.join(
-            DIR_PROCESSED,
-            f"{run_ts}-{csv_filename}-failed.csv"
+        processed_failed_path = os.path.join(
+            PROCESSED_DIR,
+            f"{run_timestamp}-{csv_filename}-failed.csv",
         )
-        shutil.move(csv_path, target)
+        shutil.move(csv_file_path, processed_failed_path)
 
         sys.exit(100)
 
-    log_event(logfile, "CSV structure/content check PASSED")
+    log_event(logfile_path, "CSV structure/content check PASSED")
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     # Load duplicate index
-    # -------------------------------------------------------------------------
-    duplicate_index = load_duplicate_index(DUP_INDEX_PATH)
+    # ---------------------------------------------------------------------
+    duplicate_index = load_duplicate_index(DUPLICATE_INDEX_PATH)
     log_event(
-        logfile,
-        f"Loaded duplicate index with {sum(len(v) for v in duplicate_index.values())} rows"
+        logfile_path,
+        f"Loaded duplicate index with {sum(len(rows) for rows in duplicate_index.values())} rows",
     )
 
     failed_any = False
     transformed_any = False
 
-    # TEMP output file
+    # ---------------------------------------------------------------------
+    # Prepare output files (temp + failed)
+    # ---------------------------------------------------------------------
     temp_output_path = os.path.join(
-        DIR_TEMP,
-        f"{run_ts}-{csv_filename}.tmp.csv"
+        TEMP_DIR,
+        f"{run_timestamp}-{csv_filename}.tmp.csv",
     )
-    temp_file = open(temp_output_path, "w", newline="", encoding="utf-8")
-    temp_writer = None
+    temp_output_file = open(temp_output_path, "w", newline="", encoding="utf-8")
+    temp_output_writer = None
 
-    # Failed rows
     transform_failed_path = os.path.join(
-        DIR_FAILED,
-        f"{run_ts}-{csv_filename}-transform-failed_rows.csv"
+        FAILED_DIR,
+        f"{run_timestamp}-{csv_filename}-transform-failed_rows.csv",
     )
     duplicate_failed_path = os.path.join(
-        DIR_FAILED,
-        f"{run_ts}-{csv_filename}-duplicate_rows.csv"
+        FAILED_DIR,
+        f"{run_timestamp}-{csv_filename}-duplicate_rows.csv",
     )
 
     transform_failed_file = None
@@ -118,174 +133,186 @@ def main():
     duplicate_failed_file = None
     duplicate_failed_writer = None
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     # Row-by-row processing
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     try:
-        for row in rows:
+        for csv_row in csv_rows:
 
             # Transform
             try:
-                transformed = transform_row(row)
+                transformed_row = transform_row(csv_row)
             except Exception:
                 failed_any = True
                 if transform_failed_writer is None:
                     transform_failed_file = open(
-                        transform_failed_path, "w", newline="", encoding="utf-8"
+                        transform_failed_path,
+                        "w",
+                        newline="",
+                        encoding="utf-8",
                     )
                     transform_failed_writer = csv.DictWriter(
-                        transform_failed_file, fieldnames=list(row.keys())
+                        transform_failed_file,
+                        fieldnames=list(csv_row.keys()),
                     )
                     transform_failed_writer.writeheader()
-                transform_failed_writer.writerow(row)
+                transform_failed_writer.writerow(csv_row)
+                log_event(logfile_path, "Transform failed for a row")
                 continue
 
-            key = extract_key(transformed)
+            key = extract_key(transformed_row)
             if not key:
                 failed_any = True
                 if transform_failed_writer is None:
                     transform_failed_file = open(
-                        transform_failed_path, "w", newline="", encoding="utf-8"
+                        transform_failed_path,
+                        "w",
+                        newline="",
+                        encoding="utf-8",
                     )
                     transform_failed_writer = csv.DictWriter(
-                        transform_failed_file, fieldnames=list(row.keys())
+                        transform_failed_file,
+                        fieldnames=list(csv_row.keys()),
                     )
                     transform_failed_writer.writeheader()
-                transform_failed_writer.writerow(row)
+                transform_failed_writer.writerow(csv_row)
+                log_event(logfile_path, "Missing BANKREFERENTIE for a row")
                 continue
 
             # Duplicate check
             existing_rows = duplicate_index.get(key, [])
-            is_identical = any(existing == transformed for existing in existing_rows)
+            is_identical = any(existing_row == transformed_row for existing_row in existing_rows)
 
             if is_identical:
-                log_event(logfile, f"IGNORED identical row with key {key}")
+                log_event(logfile_path, f"IGNORED identical row with key {key}")
                 continue
 
             if existing_rows:
                 failed_any = True
                 if duplicate_failed_writer is None:
                     duplicate_failed_file = open(
-                        duplicate_failed_path, "w", newline="", encoding="utf-8"
+                        duplicate_failed_path,
+                        "w",
+                        newline="",
+                        encoding="utf-8",
                     )
                     duplicate_failed_writer = csv.DictWriter(
-                        duplicate_failed_file, fieldnames=list(transformed.keys())
+                        duplicate_failed_file,
+                        fieldnames=list(transformed_row.keys()),
                     )
                     duplicate_failed_writer.writeheader()
-                duplicate_failed_writer.writerow(transformed)
-                log_event(logfile, f"DUPLICATE key (non-identical) {key}")
+                duplicate_failed_writer.writerow(transformed_row)
+                log_event(logfile_path, f"DUPLICATE key (non-identical) {key}")
                 continue
 
             # Not a duplicate → transformed
             transformed_any = True
-            if temp_writer is None:
-                temp_writer = csv.DictWriter(
-                    temp_file, fieldnames=list(transformed.keys())
+            if temp_output_writer is None:
+                temp_output_writer = csv.DictWriter(
+                    temp_output_file,
+                    fieldnames=list(transformed_row.keys()),
                 )
-                temp_writer.writeheader()
-            temp_writer.writerow(transformed)
+                temp_output_writer.writeheader()
+            temp_output_writer.writerow(transformed_row)
 
-            # Update in-memory index
-            duplicate_index[key].append(transformed)
+            duplicate_index[key].append(transformed_row)
 
-    except Exception as e:
-        log_event(logfile, f"ERROR during row processing: {e}")
-        traceback.print_exc()
+    except Exception as exception:
+        log_event(logfile_path, f"ERROR during row processing: {exception}")
+        traceback_str = traceback.format_exc()
+        log_event(logfile_path, f"TRACEBACK:\n{traceback_str}")
         sys.exit(1)
 
     finally:
-        temp_file.close()
+        temp_output_file.close()
         if transform_failed_file:
             transform_failed_file.close()
         if duplicate_failed_file:
             duplicate_failed_file.close()
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     # Final classification
-    # -------------------------------------------------------------------------
-    temp_exists = os.path.exists(temp_output_path)
-    temp_empty = False
-
-    if temp_exists:
-        with open(temp_output_path, newline="", encoding="utf-8") as f:
-            temp_empty = (sum(1 for _ in f) <= 1)
+    # ---------------------------------------------------------------------
+    temp_output_exists = os.path.exists(temp_output_path)
 
     # A) All failed
     if failed_any and not transformed_any:
-        log_event(logfile, "All rows failed")
+        log_event(logfile_path, "All rows failed")
 
-        target = os.path.join(
-            DIR_PROCESSED,
-            f"{run_ts}-{csv_filename}-failed.csv"
+        processed_failed_path = os.path.join(
+            PROCESSED_DIR,
+            f"{run_timestamp}-{csv_filename}-failed.csv",
         )
-        shutil.move(csv_path, target)
+        shutil.move(csv_file_path, processed_failed_path)
 
-        if temp_exists:
+        if temp_output_exists:
             os.remove(temp_output_path)
 
         sys.exit(100)
 
     # B) Partial success
     if failed_any and transformed_any:
-        log_event(logfile, "Partial success")
+        log_event(logfile_path, "Partial success")
 
         transformed_rows = []
-        with open(temp_output_path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            transformed_rows.extend(reader)
+        with open(temp_output_path, newline="", encoding="utf-8") as temp_output_read_file:
+            temp_output_reader = csv.DictReader(temp_output_read_file)
+            for transformed_row in temp_output_reader:
+                transformed_rows.append(transformed_row)
 
-        append_to_duplicate_index(DUP_INDEX_PATH, transformed_rows)
+        append_to_duplicate_index(DUPLICATE_INDEX_PATH, transformed_rows)
 
-        final_path = os.path.join(
-            DIR_NORMALIZED,
-            f"{run_ts}-{csv_filename}-partial.csv"
+        final_normalized_path = os.path.join(
+            NORMALIZED_DIR,
+            f"{run_timestamp}-{csv_filename}-partial.csv",
         )
-        shutil.move(temp_output_path, final_path)
+        shutil.move(temp_output_path, final_normalized_path)
 
-        target = os.path.join(
-            DIR_PROCESSED,
-            f"{run_ts}-{csv_filename}-partial.csv"
+        processed_partial_path = os.path.join(
+            PROCESSED_DIR,
+            f"{run_timestamp}-{csv_filename}-partial.csv",
         )
-        shutil.move(csv_path, target)
+        shutil.move(csv_file_path, processed_partial_path)
 
         sys.exit(101)
 
     # C) Full success
     if not failed_any and transformed_any:
-        log_event(logfile, "Full success")
+        log_event(logfile_path, "Full success")
 
         transformed_rows = []
-        with open(temp_output_path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            transformed_rows.extend(reader)
+        with open(temp_output_path, newline="", encoding="utf-8") as temp_output_read_file:
+            temp_output_reader = csv.DictReader(temp_output_read_file)
+            for transformed_row in temp_output_reader:
+                transformed_rows.append(transformed_row)
 
-        append_to_duplicate_index(DUP_INDEX_PATH, transformed_rows)
+        append_to_duplicate_index(DUPLICATE_INDEX_PATH, transformed_rows)
 
-        final_path = os.path.join(
-            DIR_NORMALIZED,
-            f"{run_ts}-{csv_filename}.csv"
+        final_normalized_path = os.path.join(
+            NORMALIZED_DIR,
+            f"{run_timestamp}-{csv_filename}.csv",
         )
-        shutil.move(temp_output_path, final_path)
+        shutil.move(temp_output_path, final_normalized_path)
 
-        target = os.path.join(
-            DIR_PROCESSED,
-            f"{run_ts}-{csv_filename}.csv"
+        processed_success_path = os.path.join(
+            PROCESSED_DIR,
+            f"{run_timestamp}-{csv_filename}.csv",
         )
-        shutil.move(csv_path, target)
+        shutil.move(csv_file_path, processed_success_path)
 
         sys.exit(0)
 
     # D) All full duplicates
     if not failed_any and not transformed_any:
-        log_event(logfile, "All rows were FULL duplicates")
+        log_event(logfile_path, "All rows were FULL duplicates")
 
-        target = os.path.join(
-            DIR_PROCESSED,
-            f"{run_ts}-{csv_filename}.csv"
+        processed_duplicates_path = os.path.join(
+            PROCESSED_DIR,
+            f"{run_timestamp}-{csv_filename}.csv",
         )
-        shutil.move(csv_path, target)
+        shutil.move(csv_file_path, processed_duplicates_path)
 
-        if temp_exists:
+        if temp_output_exists:
             os.remove(temp_output_path)
 
         sys.exit(0)
