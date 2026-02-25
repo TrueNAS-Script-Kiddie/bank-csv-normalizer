@@ -15,7 +15,7 @@ LOCKFILE_PATH="${BASE_DIR}/.process.lock"
 # Always remove lockfile, even on crash
 cleanup() {
     rm -f "${LOCKFILE_PATH}"
-} 
+}
 trap cleanup INT TERM EXIT
 
 # Prevent double runs
@@ -46,25 +46,20 @@ for FILE_PATH in "${IN_DIR}"/*.csv; do
     EXIT_CODE="${?}"
 
     case "${EXIT_CODE}" in
-        0)
-            echo "Done." >> "${LOGFILE_PATH}"
+        0|65|75)
+            # Python handled everything → bash does absolutely nothing
             ;;
 
         1)
+            # Python crashed before cleanup → bash must move the file
             mv "${FILE_PATH}" "${FAILED_DIR}/${RUN_TIMESTAMP}-${FILENAME}-failed.csv"
-            echo "${PYTHONSCRIPT_FILENAME} didn't run correctly (exit code 1)." >> "${LOGFILE_PATH}"
-            ;;
-
-        100)
-            echo "(exit code 100)." >> "${LOGFILE_PATH}"
-            ;;
-
-        101)
-            echo "(exit code 101)." >> "${LOGFILE_PATH}"
+            echo "${PYTHONSCRIPT_FILENAME} crashed before cleanup (exit code 1)." >> "${LOGFILE_PATH}"
             ;;
 
         *)
-            echo "${PYTHONSCRIPT_FILENAME} exited with unknown exit code ${EXIT_CODE}." >> "${LOGFILE_PATH}"
+            # Unknown exit code → treat as Python crash
+            mv "${FILE_PATH}" "${FAILED_DIR}/${RUN_TIMESTAMP}-${FILENAME}-failed.csv"
+            echo "${PYTHONSCRIPT_FILENAME} exited with unknown code ${EXIT_CODE}." >> "${LOGFILE_PATH}"
             ;;
     esac
 done
