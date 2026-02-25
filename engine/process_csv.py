@@ -17,9 +17,15 @@ from core.duplicate_index import (
     load_duplicate_index,
     append_to_duplicate_index,
 )
+from core.duplicate_backup import (
+    backup_duplicate_index,
+    rotate_duplicate_backups,
+)
+from core.email_notifications import send_email
+
 
 # -------------------------------------------------------------------------
-# Directory configuration (module-level constants)
+# Directory configuration
 # -------------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -30,6 +36,7 @@ FAILED_DIR = os.path.join(DATA_DIR, "failed")
 NORMALIZED_DIR = os.path.join(DATA_DIR, "normalized")
 TEMP_DIR = os.path.join(DATA_DIR, "temp")
 DUPLICATE_INDEX_DIR = os.path.join(DATA_DIR, "duplicate-index")
+BACKUP_DIR = os.path.join(DUPLICATE_INDEX_DIR, "backups")
 
 DUPLICATE_INDEX_PATH = os.path.join(DUPLICATE_INDEX_DIR, "duplicate-index.csv")
 
@@ -38,7 +45,6 @@ DUPLICATE_INDEX_PATH = os.path.join(DUPLICATE_INDEX_DIR, "duplicate-index.csv")
 # Logging
 # -------------------------------------------------------------------------
 def log_event(logfile_path: str, message: str) -> None:
-    """Append timestamped log entry."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(logfile_path, "a", encoding="utf-8") as log_file:
         log_file.write(f"{timestamp} {message}\n")
@@ -68,6 +74,7 @@ def main() -> None:
     os.makedirs(NORMALIZED_DIR, exist_ok=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
     os.makedirs(DUPLICATE_INDEX_DIR, exist_ok=True)
+    os.makedirs(BACKUP_DIR, exist_ok=True)
 
     # ---------------------------------------------------------------------
     # Load CSV
@@ -77,8 +84,16 @@ def main() -> None:
         log_event(logfile_path, f"Loaded {len(csv_rows)} rows")
     except Exception as exception:
         log_event(logfile_path, f"ERROR loading CSV: {exception}")
-        traceback_str = traceback.format_exc()
-        log_event(logfile_path, f"TRACEBACK:\n{traceback_str}")
+        log_event(logfile_path, traceback.format_exc())
+
+        send_email(
+            subject="CSV LOAD ERROR",
+            body=f"File: {csv_filename}\nTimestamp: {run_timestamp}\nError while loading CSV.",
+            log_event=log_event,
+            logfile_path=logfile_path,
+        )
+
+        # Python kon niets verplaatsen → bash moet cleanup doen
         sys.exit(1)
 
     # ---------------------------------------------------------------------
@@ -93,7 +108,15 @@ def main() -> None:
         )
         shutil.move(csv_file_path, processed_failed_path)
 
-        sys.exit(100)
+        send_email(
+            subject="CSV STRUCTURE FAILED",
+            body=f"File: {csv_filename}\nTimestamp: {run_timestamp}\nThe CSV structure/content validation failed.",
+            log_event=log_event,
+            logfile_path=logfile_path,
+        )
+
+        # Python heeft cleanup gedaan
+        sys.exit(65)
 
     log_event(logfile_path, "CSV structure/content check PASSED")
 
@@ -110,7 +133,7 @@ def main() -> None:
     transformed_any = False
 
     # ---------------------------------------------------------------------
-    # Prepare output files (temp + failed)
+    # Prepare output files
     # ---------------------------------------------------------------------
     temp_output_path = os.path.join(
         TEMP_DIR,
@@ -219,8 +242,16 @@ def main() -> None:
 
     except Exception as exception:
         log_event(logfile_path, f"ERROR during row processing: {exception}")
-        traceback_str = traceback.format_exc()
-        log_event(logfile_path, f"TRACEBACK:\n{traceback_str}")
+        log_event(logfile_path, traceback.format_exc())
+
+        send_email(
+            subject="CSV PROCESSING ERROR",
+            body=f"File: {csv_filename}\nTimestamp: {run_timestamp}\nError during row processing.",
+            log_event=log_event,
+            logfile_path=logfile_path,
+        )
+
+        # Python kon cleanup niet doen → bash moet moven
         sys.exit(1)
 
     finally:
@@ -248,7 +279,14 @@ def main() -> None:
         if temp_output_exists:
             os.remove(temp_output_path)
 
-        sys.exit(100)
+        send_email(
+            subject="CSV FAILED (ALL ROWS)",
+            body=f"File: {csv_filename}\nTimestamp: {run_timestamp}\nAll rows failed transformation.",
+            log_event=log_event,
+            logfile_path=logfile_path,
+        )
+
+        sys.exit(65)
 
     # B) Partial success
     if failed_any and transformed_any:
@@ -261,6 +299,8 @@ def main() -> None:
                 transformed_rows.append(transformed_row)
 
         append_to_duplicate_index(DUPLICATE_INDEX_PATH, transformed_rows)
+        backup_duplicate_index(DUPLICATE_INDEX_PATH, BACKUP_DIR, run_timestamp, log_event, logfile_path)
+        rotate_duplicate_backups(BACKUP_DIR, log_event, logfile_path)
 
         final_normalized_path = os.path.join(
             NORMALIZED_DIR,
@@ -274,7 +314,14 @@ def main() -> None:
         )
         shutil.move(csv_file_path, processed_partial_path)
 
-        sys.exit(101)
+        send_email(
+            subject="CSV PARTIAL SUCCESS",
+            body=f"File: {csv_filename}\nTimestamp: {run_timestamp}\nSome rows succeeded, some failed.",
+            log_event=log_event,
+            logfile_path=logfile_path,
+        )
+
+        sys.exit(75)
 
     # C) Full success
     if not failed_any and transformed_any:
@@ -287,6 +334,8 @@ def main() -> None:
                 transformed_rows.append(transformed_row)
 
         append_to_duplicate_index(DUPLICATE_INDEX_PATH, transformed_rows)
+        backup_duplicate_index(DUPLICATE_INDEX_PATH, BACKUP_DIR, run_timestamp, log_event, logfile_path)
+        rotate_duplicate_backups(BACKUP_DIR, log_event, logfile_path)
 
         final_normalized_path = os.path.join(
             NORMALIZED_DIR,
@@ -299,6 +348,13 @@ def main() -> None:
             f"{run_timestamp}-{csv_filename}.csv",
         )
         shutil.move(csv_file_path, processed_success_path)
+
+        send_email(
+            subject="CSV SUCCESS",
+            body=f"File: {csv_filename}\nTimestamp: {run_timestamp}\nAll rows processed successfully.",
+            log_event=log_event,
+            logfile_path=logfile_path,
+        )
 
         sys.exit(0)
 
@@ -314,6 +370,13 @@ def main() -> None:
 
         if temp_output_exists:
             os.remove(temp_output_path)
+
+        send_email(
+            subject="CSV FULL DUPLICATES",
+            body=f"File: {csv_filename}\nTimestamp: {run_timestamp}\nAll rows were full duplicates.",
+            log_event=log_event,
+            logfile_path=logfile_path,
+        )
 
         sys.exit(0)
 
