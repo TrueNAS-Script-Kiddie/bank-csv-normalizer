@@ -68,19 +68,26 @@ def main() -> None:
     logfile_path = sys.argv[3]
     csv_filename = os.path.basename(csv_file_path)
 
-    # Expose globals to completion.py
-    completion.csv_file_path = csv_file_path
-    completion.csv_filename = csv_filename
-    completion.run_timestamp = run_timestamp
-    completion.logfile_path = logfile_path
+    # Build base context (will be updated later)
+    context: Dict[str, Any] = {
+        "csv_file_path": csv_file_path,
+        "csv_filename": csv_filename,
+        "run_timestamp": run_timestamp,
+        "logfile_path": logfile_path,
+        "temp_output_path": None,
+        "directories": {
+            "processed": PROCESSED_DIR,
+            "failed": FAILED_DIR,
+            "normalized": NORMALIZED_DIR,
+            "temp": TEMP_DIR,
+            "duplicate_index": DUPLICATE_INDEX_PATH,
+            "backup": BACKUP_DIR,
+        },
+        "open_writers": [],
+        "log_event": log_event,
+    }
 
-    completion.PROCESSED_DIR = PROCESSED_DIR
-    completion.NORMALIZED_DIR = NORMALIZED_DIR
-    completion.FAILED_DIR = FAILED_DIR
-    completion.TEMP_DIR = TEMP_DIR
-    completion.DUPLICATE_INDEX_PATH = DUPLICATE_INDEX_PATH
-    completion.BACKUP_DIR = BACKUP_DIR
-
+    # Global try MUST start as early as possible
     try:
         # Ensure directory structure exists
         for d in (
@@ -100,6 +107,7 @@ def main() -> None:
         # Validate structure
         if not validate_csv_structure(csv_rows):
             completion.finalize(
+                context,
                 exit_code=65,
                 move_suffix="-failed.csv",
                 normalized_suffix=None,
@@ -125,15 +133,9 @@ def main() -> None:
         temp_output_file = open(temp_output_path, "w", newline="", encoding="utf-8")
         temp_output_writer: Optional[csv.DictWriter] = None
 
-        # Register writer for final cleanup
-        completion.open_writers.append({"file": temp_output_file})
-
         # Writers for failed rows
         transform_failed_ref: Dict[str, Any] = {"writer": None, "file": None}
         duplicate_failed_ref: Dict[str, Any] = {"writer": None, "file": None}
-
-        completion.open_writers.append(transform_failed_ref)
-        completion.open_writers.append(duplicate_failed_ref)
 
         transform_failed_path: str = os.path.join(
             FAILED_DIR,
@@ -143,6 +145,14 @@ def main() -> None:
             FAILED_DIR,
             f"{run_timestamp}-{csv_filename}-duplicate_rows.csv",
         )
+
+        # Update context now that temp_output_path and writers exist
+        context["temp_output_path"] = temp_output_path
+        context["open_writers"] = [
+            {"file": temp_output_file},
+            transform_failed_ref,
+            duplicate_failed_ref,
+        ]
 
         # Row processing loop
         for csv_row in csv_rows:
@@ -192,6 +202,7 @@ def main() -> None:
         # Final classification
         if failed_any and not transformed_any:
             completion.finalize(
+                context,
                 exit_code=65,
                 move_suffix="-failed.csv",
                 normalized_suffix=None,
@@ -203,6 +214,7 @@ def main() -> None:
         if failed_any and transformed_any:
             transformed_rows = load_transformed_rows(temp_output_path)
             completion.finalize(
+                context,
                 exit_code=75,
                 move_suffix="-partial.csv",
                 normalized_suffix="-partial.csv",
@@ -214,6 +226,7 @@ def main() -> None:
         if not failed_any and transformed_any:
             transformed_rows = load_transformed_rows(temp_output_path)
             completion.finalize(
+                context,
                 exit_code=0,
                 move_suffix=".csv",
                 normalized_suffix=".csv",
@@ -224,6 +237,7 @@ def main() -> None:
 
         # All duplicates
         completion.finalize(
+            context,
             exit_code=0,
             move_suffix=".csv",
             normalized_suffix=None,
@@ -232,7 +246,11 @@ def main() -> None:
         )
 
     except Exception as e:
+        # context already exists; ensure temp_output_path is set
+        context["temp_output_path"] = temp_output_path
+
         completion.finalize(
+            context,
             exit_code=99,
             move_suffix="-failed.csv",
             normalized_suffix=None,
