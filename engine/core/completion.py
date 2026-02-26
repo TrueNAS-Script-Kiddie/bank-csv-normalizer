@@ -100,45 +100,34 @@ def finalize(
     DUPLICATE_INDEX_PATH = dirs["duplicate_index"]
     BACKUP_DIR = dirs["backup"]
 
-    # Duplicate index update
+    # ----------------------------------------------------------------------
+    # 1. PREPARE DUPLICATE-INDEX UPDATE (NOT CRITICAL)
+    # ----------------------------------------------------------------------
+    updated_duplicate_index = None
+    previous_duplicate_index = None
+
     try:
         if transformed_rows:
-            append_to_duplicate_index(DUPLICATE_INDEX_PATH, transformed_rows)
-            backup_duplicate_index(
-                DUPLICATE_INDEX_PATH,
+            # Create backup-with-new-rows file
+            updated_duplicate_index = os.path.join(
                 BACKUP_DIR,
-                run_timestamp,
-                lambda p, m: None,  # no-op logger
-                logfile_path,
+                f"{run_timestamp}-{csv_filename}-duplicate-index.csv"
             )
-            rotate_duplicate_backups(
-                BACKUP_DIR,
-                lambda p, m: None,
-                logfile_path,
-            )
+            shutil.copy2(DUPLICATE_INDEX_PATH, updated_duplicate_index)
+
+            # Append new rows to backup version
+            append_to_duplicate_index(updated_duplicate_index, transformed_rows)
+
     except Exception as e:
         log_email_exit(
             context,
             97,
-            f"DUPLICATE INDEX ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
+            f"DUPLICATE INDEX PREP ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
         )
 
-    # Move normalized output
-    try:
-        if normalized_suffix is not None and temp_output_path:
-            normalized_output_path = os.path.join(
-                NORMALIZED_DIR,
-                f"{run_timestamp}-{csv_filename}{normalized_suffix}",
-            )
-            shutil.move(temp_output_path, normalized_output_path)
-    except Exception as e:
-        log_email_exit(
-            context,
-            96,
-            f"NORMALIZED OUTPUT MOVE ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
-        )
-
-    # Move original CSV
+    # ----------------------------------------------------------------------
+    # 2. MOVE ORIGINAL CSV (CRITICAL)
+    # ----------------------------------------------------------------------
     try:
         final_csv_path = os.path.join(
             PROCESSED_DIR,
@@ -146,21 +135,112 @@ def finalize(
         )
         shutil.move(csv_file_path, final_csv_path)
     except Exception as e:
+        failed_path = os.path.join(
+            FAILED_DIR,
+            f"{run_timestamp}-{csv_filename}-failed.csv"
+        )
+        try:
+            shutil.move(csv_file_path, failed_path)
+        except Exception:
+            pass
+
         log_email_exit(
             context,
             94,
             f"ORIGINAL CSV MOVE ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
         )
 
-    # Close all writers
+    # ----------------------------------------------------------------------
+    # 3. COMMIT DUPLICATE-INDEX (CRITICAL)
+    # ----------------------------------------------------------------------
+    try:
+        if transformed_rows:
+            # Create restore copy of current dup-index (in TEMP_DIR)
+            previous_duplicate_index = os.path.join(
+                TEMP_DIR,
+                "previous-duplicate-index.csv"
+            )
+            shutil.copy2(DUPLICATE_INDEX_PATH, previous_duplicate_index)
+
+            # Commit new dup-index
+            shutil.copyfile(updated_duplicate_index, DUPLICATE_INDEX_PATH)
+
+    except Exception as e:
+        failed_path = os.path.join(
+            FAILED_DIR,
+            f"{run_timestamp}-{csv_filename}-failed.csv"
+        )
+        try:
+            shutil.move(final_csv_path, failed_path)
+        except Exception:
+            pass
+
+        log_email_exit(
+            context,
+            93,
+            f"DUPLICATE INDEX COMMIT ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
+        )
+
+    # ----------------------------------------------------------------------
+    # 4. MOVE NORMALIZED OUTPUT (FINAL COMMIT STEP — CRITICAL)
+    # ----------------------------------------------------------------------
+    try:
+        if normalized_suffix is not None and temp_output_path:
+            normalized_output_path = os.path.join(
+                NORMALIZED_DIR,
+                f"{run_timestamp}-{csv_filename}{normalized_suffix}",
+            )
+            shutil.move(temp_output_path, normalized_output_path)
+
+    except Exception as e:
+        # Rollback dup-index to restore copy
+        if previous_duplicate_index:
+            try:
+                shutil.copyfile(previous_duplicate_index, DUPLICATE_INDEX_PATH)
+            except Exception:
+                pass
+
+        failed_path = os.path.join(
+            FAILED_DIR,
+            f"{run_timestamp}-{csv_filename}-failed.csv"
+        )
+        try:
+            shutil.move(final_csv_path, failed_path)
+        except Exception:
+            pass
+
+        log_email_exit(
+            context,
+            92,
+            f"NORMALIZED OUTPUT MOVE ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
+        )
+
+    # ----------------------------------------------------------------------
+    # 5. ROTATION (NOT CRITICAL)
+    # ----------------------------------------------------------------------
+    try:
+        rotate_duplicate_backups(
+            BACKUP_DIR,
+            lambda p, m: None,
+            logfile_path,
+        )
+    except Exception:
+        pass
+
+    # ----------------------------------------------------------------------
+    # 6. CLOSE WRITERS
+    # ----------------------------------------------------------------------
     close_open_writers(context)
 
-    # Cleanup temp directory
+    # ----------------------------------------------------------------------
+    # 7. CLEANUP TEMP
+    # ----------------------------------------------------------------------
     try:
         shutil.rmtree(TEMP_DIR, ignore_errors=True)
     except Exception:
         pass
 
-    # Final log + email + exit
+    # ----------------------------------------------------------------------
+    # 8. FINAL LOG + EMAIL + EXIT
+    # ----------------------------------------------------------------------
     log_email_exit(context, exit_code, message)
-    

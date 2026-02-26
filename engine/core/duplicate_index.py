@@ -49,11 +49,11 @@ def load_duplicate_index(duplicate_index_path: str) -> DefaultDict[str, List[Dic
 
 
 # ---------------------------------------------------------------------------
-# Append new rows to duplicate index
+# Append new rows to updated_duplicate_index
 # ---------------------------------------------------------------------------
 def append_to_duplicate_index(duplicate_index_path: str, new_rows: List[Dict[str, str]]) -> None:
     """
-    Append transformed rows to the global duplicate index.
+    Append transformed rows to the updated_duplicate_index.
     Creates the file with header if it does not exist.
     """
     if not new_rows:
