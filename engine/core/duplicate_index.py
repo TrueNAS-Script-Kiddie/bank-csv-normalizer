@@ -73,32 +73,43 @@ def append_to_duplicate_index(duplicate_index_path: str, new_rows: List[Dict[str
 
 
 # ---------------------------------------------------------------------------
-# Create a timestamped backup of duplicate-index.csv
+# Create updated duplicate-index snapshot
 # ---------------------------------------------------------------------------
-def backup_duplicate_index(
+def create_updated_duplicate_index(
     duplicate_index_path: str,
     backup_dir: str,
     run_timestamp: str,
-    log_event: Callable[[str, str], None],
-    logfile_path: str,
-) -> None:
+    csv_filename: str,
+    transformed_rows: List[Dict[str, str]],
+) -> str:
     """
-    Create a timestamped backup of duplicate-index.csv.
-    Logs only on error. Never interrupts the processing flow.
+    Create a timestamped updated duplicate-index file:
+    - Copy existing duplicate-index.csv if present
+    - Otherwise create empty base
+    - Append transformed_rows
+    Returns the path to the updated duplicate index file.
     """
-    try:
-        if not os.path.exists(duplicate_index_path):
-            return
 
-        os.makedirs(backup_dir, exist_ok=True)
+    import os
+    import shutil
+    from core.duplicate_index import append_to_duplicate_index
 
-        backup_filename = f"{run_timestamp}-duplicate-index.csv"
-        backup_path = os.path.join(backup_dir, backup_filename)
+    # Path for updated snapshot
+    updated_duplicate_index = os.path.join(
+        backup_dir,
+        f"{run_timestamp}-{csv_filename}-duplicate-index.csv"
+    )
 
-        shutil.copy2(duplicate_index_path, backup_path)
+    # Base: existing dup-index or empty file
+    if os.path.exists(duplicate_index_path):
+        shutil.copy2(duplicate_index_path, updated_duplicate_index)
+    else:
+        open(updated_duplicate_index, "w", encoding="utf-8").close()
 
-    except Exception as exc:
-        log_event(logfile_path, f"[BACKUP ERROR] {exc}")
+    # Append new rows
+    append_to_duplicate_index(updated_duplicate_index, transformed_rows)
+
+    return updated_duplicate_index
 
 
 # ---------------------------------------------------------------------------

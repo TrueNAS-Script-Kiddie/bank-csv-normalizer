@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from core.duplicate_index import (
     append_to_duplicate_index,
-    backup_duplicate_index,
+    create_updated_duplicate_index,
     rotate_duplicate_backups,
 )
 from core.email_notifications import send_email
@@ -108,20 +108,13 @@ def finalize(
 
     try:
         if transformed_rows:
-            # Create backup-with-new-rows file
-            updated_duplicate_index = os.path.join(
+            updated_duplicate_index = create_updated_duplicate_index(
+                DUPLICATE_INDEX_PATH,
                 BACKUP_DIR,
-                f"{run_timestamp}-{csv_filename}-duplicate-index.csv"
+                run_timestamp,
+                csv_filename,
+                transformed_rows,
             )
-
-            # if dup-index does not exist, create empty base
-            if os.path.exists(DUPLICATE_INDEX_PATH):
-                shutil.copy2(DUPLICATE_INDEX_PATH, updated_duplicate_index)
-            else:
-                open(updated_duplicate_index, "w", encoding="utf-8").close()
-
-            # Append new rows to backup version
-            append_to_duplicate_index(updated_duplicate_index, transformed_rows)
 
     except Exception as e:
         log_email_exit(
