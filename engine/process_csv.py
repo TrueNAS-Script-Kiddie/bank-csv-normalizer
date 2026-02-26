@@ -48,9 +48,12 @@ temp_output_path: Optional[str] = None
 # -------------------------------------------------------------------------
 def log_event(logfile_path: str, message: str) -> None:
     """Append a timestamped log message to the logfile."""
-    timestamp: str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(logfile_path, "a", encoding="utf-8") as f:
-        f.write(f"{timestamp} {message}\n")
+    try:
+        timestamp: str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(logfile_path, "a", encoding="utf-8") as f:
+            f.write(f"{timestamp} {message}\n")
+    except Exception:
+        pass
 
 
 # -------------------------------------------------------------------------
@@ -150,8 +153,6 @@ def main() -> None:
         context["temp_output_path"] = temp_output_path
         context["open_writers"] = [
             {"file": temp_output_file},
-            transform_failed_ref,
-            duplicate_failed_ref,
         ]
 
         # Row processing loop
@@ -162,6 +163,8 @@ def main() -> None:
             except Exception:
                 failed_any = True
                 w = ensure_writer(transform_failed_path, transform_failed_ref, list(csv_row.keys()))
+                if transform_failed_ref not in context["open_writers"]:
+                    context["open_writers"].append(transform_failed_ref)
                 w.writerow(csv_row)
                 log_event(logfile_path, "Transform failed for a row")
                 continue
@@ -170,6 +173,8 @@ def main() -> None:
             if not key:
                 failed_any = True
                 w = ensure_writer(transform_failed_path, transform_failed_ref, list(csv_row.keys()))
+                if transform_failed_ref not in context["open_writers"]:
+                    context["open_writers"].append(transform_failed_ref)
                 w.writerow(csv_row)
                 log_event(logfile_path, "Missing BANKREFERENTIE for a row")
                 continue
@@ -183,6 +188,8 @@ def main() -> None:
             if existing_rows:
                 failed_any = True
                 w = ensure_writer(duplicate_failed_path, duplicate_failed_ref, list(transformed_row.keys()))
+                if duplicate_failed_ref not in context["open_writers"]:
+                    context["open_writers"].append(duplicate_failed_ref)
                 w.writerow(transformed_row)
                 log_event(logfile_path, f"DUPLICATE key (non-identical) {key}")
                 continue

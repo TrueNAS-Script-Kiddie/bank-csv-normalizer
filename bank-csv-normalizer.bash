@@ -24,7 +24,6 @@ touch "${LOCKFILE_PATH}"
 
 for FILE_PATH in "${IN_DIR}"/*.csv; do
     FILENAME="$(basename "${FILE_PATH}")"
-    TMP_FILE_PATH="${FILE_PATH}.tmpcheck"
 
     # One timestamp/logfile per csv
     RUN_TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
@@ -33,14 +32,16 @@ for FILE_PATH in "${IN_DIR}"/*.csv; do
     echo -n "$(date '+%F %T') Processing file ${FILENAME}... " >> "${LOGFILE_PATH}"
 
     # Avoid processing files still being uploaded
-    cp "${FILE_PATH}" "${TMP_FILE_PATH}"
-    sleep 1
-    if ! cmp -s "${FILE_PATH}" "${TMP_FILE_PATH}"; then
+    # --- NEW: size-stabilisatie ---
+    SIZE1=$(stat -c%s "${FILE_PATH}")
+    sleep 2
+    SIZE2=$(stat -c%s "${FILE_PATH}")
+
+    if [[ "${SIZE1}" -ne "${SIZE2}" ]]; then
         echo "Skipped (file still growing)" >> "${LOGFILE_PATH}"
-        rm -f "${TMP_FILE_PATH}"
         continue
     fi
-    rm -f "${TMP_FILE_PATH}"
+    # --- END NEW ---
 
     python3 "${PYTHONSCRIPT_PATH}" "${FILE_PATH}" "${RUN_TIMESTAMP}" "${LOGFILE_PATH}"
     EXIT_CODE="${?}"
@@ -52,13 +53,13 @@ for FILE_PATH in "${IN_DIR}"/*.csv; do
 
         1)
             # Python crashed before cleanup → bash must move the file
-            mv "${FILE_PATH}" "${FAILED_DIR}/${RUN_TIMESTAMP}-${FILENAME}-failed.csv"
+            [[ -f "${FILE_PATH}" ]] && mv "${FILE_PATH}" "${FAILED_DIR}/${RUN_TIMESTAMP}-${FILENAME}-failed.csv"
             echo "${PYTHONSCRIPT_FILENAME} crashed before cleanup (exit code 1)." >> "${LOGFILE_PATH}"
             ;;
 
         *)
             # Unknown exit code → treat as Python crash
-            mv "${FILE_PATH}" "${FAILED_DIR}/${RUN_TIMESTAMP}-${FILENAME}-failed.csv"
+            [[ -f "${FILE_PATH}" ]] && mv "${FILE_PATH}" "${FAILED_DIR}/${RUN_TIMESTAMP}-${FILENAME}-failed.csv"
             echo "${PYTHONSCRIPT_FILENAME} exited with unknown code ${EXIT_CODE}." >> "${LOGFILE_PATH}"
             ;;
     esac
