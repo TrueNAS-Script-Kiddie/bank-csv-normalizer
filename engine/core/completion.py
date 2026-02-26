@@ -113,7 +113,12 @@ def finalize(
                 BACKUP_DIR,
                 f"{run_timestamp}-{csv_filename}-duplicate-index.csv"
             )
-            shutil.copy2(DUPLICATE_INDEX_PATH, updated_duplicate_index)
+
+            # if dup-index does not exist, create empty base
+            if os.path.exists(DUPLICATE_INDEX_PATH):
+                shutil.copy2(DUPLICATE_INDEX_PATH, updated_duplicate_index)
+            else:
+                open(updated_duplicate_index, "w", encoding="utf-8").close()
 
             # Append new rows to backup version
             append_to_duplicate_index(updated_duplicate_index, transformed_rows)
@@ -160,7 +165,12 @@ def finalize(
                 TEMP_DIR,
                 "previous-duplicate-index.csv"
             )
-            shutil.copy2(DUPLICATE_INDEX_PATH, previous_duplicate_index)
+
+            # if dup-index does not exist, create empty restore
+            if os.path.exists(DUPLICATE_INDEX_PATH):
+                shutil.copy2(DUPLICATE_INDEX_PATH, previous_duplicate_index)
+            else:
+                open(previous_duplicate_index, "w", encoding="utf-8").close()
 
             # Commit new dup-index
             shutil.copyfile(updated_duplicate_index, DUPLICATE_INDEX_PATH)
