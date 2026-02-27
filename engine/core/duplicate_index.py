@@ -14,6 +14,7 @@ import shutil
 from datetime import datetime, timedelta
 from typing import List, Dict, DefaultDict, Callable, Any
 from collections import defaultdict
+from engine.core.runtime import log_event
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 shopt -s nullglob
 
-BASE_DIR="/mnt/ssdmaster-pool/encrypted-ds/app-ds/bank-csv-normalizer"
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 IN_DIR="${BASE_DIR}/data/incoming"
 FAILED_DIR="${BASE_DIR}/data/failed"
 LOG_DIR="${BASE_DIR}/data/logs"

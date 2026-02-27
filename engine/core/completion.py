@@ -21,7 +21,7 @@ from core.duplicate_index import (
     create_updated_duplicate_index,
     rotate_duplicate_backups,
 )
-from core.email_notifications import send_email
+from engine.core.runtime import log_event, send_email
 
 
 # ---------------------------------------------------------------------------

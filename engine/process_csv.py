@@ -18,6 +18,7 @@ from core.csv_runtime import (
 
 from engine.core.normalize import normalize_row
 from core.duplicate_index import load_duplicate_index, classify_duplicate
+from engine.core.runtime import log_event
 import core.completion as completion
 
 
@@ -32,19 +33,6 @@ csv_file_path: str
 csv_filename: str
 run_timestamp: str
 logfile_path: str
-
-
-# -------------------------------------------------------------------------
-# Logging
-# -------------------------------------------------------------------------
-def log_event(logfile_path: str, message: str) -> None:
-    """Append a timestamped log message to the logfile."""
-    try:
-        timestamp: str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(logfile_path, "a", encoding="utf-8") as f:
-            f.write(f"{timestamp} {message}\n")
-    except Exception:
-        pass
 
 
 # -------------------------------------------------------------------------
