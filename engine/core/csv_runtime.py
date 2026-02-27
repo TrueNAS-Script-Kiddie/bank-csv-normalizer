@@ -4,14 +4,60 @@ CSV runtime helpers:
 - CSV structure validation
 - Key extraction
 - Writer creation
-- Loading transformed rows
+- Loading normalized rows
+- Path construction for a single pipeline run
 
 This module contains all CSV-related runtime infrastructure.
 Nothing more, nothing less.
 """
 
 import csv
+import os
 from typing import Any, Dict, List, Optional
+
+
+# ---------------------------------------------------------------------------
+# Prepare paths
+# ---------------------------------------------------------------------------
+def build_paths(
+    data_dir: str,
+    run_timestamp: str,
+    csv_filename: str,
+) -> Dict[str, str]:
+    """
+    Construct all directory and file paths for a single pipeline run.
+    """
+
+    return {
+        # Directories
+        "incoming_dir": os.path.join(data_dir, "incoming"),
+        "processed_dir": os.path.join(data_dir, "processed"),
+        "failed_dir": os.path.join(data_dir, "failed"),
+        "normalized_dir": os.path.join(data_dir, "normalized"),
+        "temp_dir": os.path.join(data_dir, "temp"),
+        "duplicate_index_dir": os.path.join(data_dir, "duplicate-index"),
+        "duplicate_index_backup_dir": os.path.join(data_dir, "duplicate-index", "backups"),
+
+        # Duplicate index
+        "duplicate_index_csv": os.path.join(data_dir, "duplicate-index", "duplicate-index.csv"),
+        "duplicate_index_previous_csv": os.path.join(data_dir, "temp", "previous-duplicate-index.csv"),
+
+        # Temporary normalized output
+        "temp_normalized_csv": os.path.join(data_dir, "temp", f"{run_timestamp}-{csv_filename}.tmp.csv"),
+
+        # Failed rows
+        "failed_normalize_csv": os.path.join(data_dir, "failed", f"{run_timestamp}-{csv_filename}-normalize-failed.csv"),
+        "failed_duplicate_csv": os.path.join(data_dir, "failed", f"{run_timestamp}-{csv_filename}-duplicate-failed.csv"),
+
+        # Processed originals
+        "processed_failed_csv": os.path.join(data_dir, "processed", f"{run_timestamp}-{csv_filename}-failed.csv"),
+        "processed_partial_csv": os.path.join(data_dir, "processed", f"{run_timestamp}-{csv_filename}-partial.csv"),
+        "processed_success_csv": os.path.join(data_dir, "processed", f"{run_timestamp}-{csv_filename}.csv"),
+
+        # Normalized output
+        "normalized_partial_csv": os.path.join(data_dir, "normalized", f"{run_timestamp}-{csv_filename}-partial.csv"),
+        "normalized_success_csv": os.path.join(data_dir, "normalized", f"{run_timestamp}-{csv_filename}.csv"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -52,12 +98,8 @@ def extract_key(csv_row: Dict[str, str]) -> Optional[str]:
     Extract the unique key used for duplicate detection.
     Returns None if missing or empty.
     """
-    key = csv_row.get("BANKREFERENTIE")
-    if not key:
-        return None
-
-    key = key.strip()
-    return key if key else None
+    key = (csv_row.get("BANKREFERENTIE") or "").strip()
+    return key or None
 
 
 # ---------------------------------------------------------------------------
@@ -83,9 +125,20 @@ def ensure_writer(
 
 
 # ---------------------------------------------------------------------------
-# Load transformed rows
+# Write a failed row to the appropriate failure CSV
 # ---------------------------------------------------------------------------
-def load_transformed_rows(path: str) -> List[Dict[str, Any]]:
-    """Load all transformed rows from a temporary output file."""
+def write_failed_row(path: str, writer_ref: Dict[str, Any], row: Dict[str, Any]) -> None:
+    """
+    Write a failed row to the given CSV file, creating the writer on first use.
+    """
+    writer = ensure_writer(path, writer_ref, list(row.keys()))
+    writer.writerow(row)
+
+
+# ---------------------------------------------------------------------------
+# Load normalized rows
+# ---------------------------------------------------------------------------
+def load_normalized_rows(path: str) -> List[Dict[str, Any]]:
+    """Load all normalized rows from a temporary output file."""
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))

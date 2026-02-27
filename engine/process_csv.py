@@ -10,12 +10,14 @@ from core.csv_runtime import (
     load_csv_rows,
     validate_csv_structure,
     extract_key,
+    write_failed_row,
+    load_normalized_rows,
+    build_paths,
     ensure_writer,
-    load_transformed_rows,
 )
 
-from engine.core.transform import transform_row
-from core.duplicate_index import load_duplicate_index
+from engine.core.normalize import normalize_row
+from core.duplicate_index import load_duplicate_index, classify_duplicate
 import core.completion as completion
 
 
@@ -25,22 +27,11 @@ import core.completion as completion
 BASE_DIR: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR: str = os.path.join(BASE_DIR, "data")
 
-PROCESSED_DIR: str = os.path.join(DATA_DIR, "processed")
-FAILED_DIR: str = os.path.join(DATA_DIR, "failed")
-NORMALIZED_DIR: str = os.path.join(DATA_DIR, "normalized")
-TEMP_DIR: str = os.path.join(DATA_DIR, "temp")
-DUPLICATE_INDEX_DIR: str = os.path.join(DATA_DIR, "duplicate-index")
-BACKUP_DIR: str = os.path.join(DUPLICATE_INDEX_DIR, "backups")
-
-DUPLICATE_INDEX_PATH: str = os.path.join(DUPLICATE_INDEX_DIR, "duplicate-index.csv")
-
-
 # Globals set in main()
 csv_file_path: str
 csv_filename: str
 run_timestamp: str
 logfile_path: str
-temp_output_path: Optional[str] = None
 
 
 # -------------------------------------------------------------------------
@@ -60,7 +51,7 @@ def log_event(logfile_path: str, message: str) -> None:
 # Main pipeline
 # -------------------------------------------------------------------------
 def main() -> None:
-    global csv_file_path, csv_filename, run_timestamp, logfile_path, temp_output_path
+    global csv_file_path, csv_filename, run_timestamp, logfile_path
 
     if len(sys.argv) != 4:
         print("Usage: process_csv.py <csv_path> <run_timestamp> <logfile_path>")
@@ -71,21 +62,24 @@ def main() -> None:
     logfile_path = sys.argv[3]
     csv_filename = os.path.basename(csv_file_path)
 
-    # Build base context (will be updated later)
+    # ---------------------------------------------------------------------
+    # BUILD PATHS → canonical paths[] dict
+    # ---------------------------------------------------------------------
+    paths = build_paths(
+        data_dir=DATA_DIR,
+        run_timestamp=run_timestamp,
+        csv_filename=csv_filename,
+    )
+
+    # ---------------------------------------------------------------------
+    # CONTEXT (legacy + new paths[])
+    # ---------------------------------------------------------------------
     context: Dict[str, Any] = {
         "csv_file_path": csv_file_path,
         "csv_filename": csv_filename,
         "run_timestamp": run_timestamp,
         "logfile_path": logfile_path,
-        "temp_output_path": None,
-        "directories": {
-            "processed": PROCESSED_DIR,
-            "failed": FAILED_DIR,
-            "normalized": NORMALIZED_DIR,
-            "temp": TEMP_DIR,
-            "duplicate_index": DUPLICATE_INDEX_PATH,
-            "backup": BACKUP_DIR,
-        },
+        "paths": paths,               # canonical
         "open_writers": [],
         "log_event": log_event,
     }
@@ -94,12 +88,12 @@ def main() -> None:
     try:
         # Ensure directory structure exists
         for d in (
-            PROCESSED_DIR,
-            FAILED_DIR,
-            NORMALIZED_DIR,
-            DUPLICATE_INDEX_DIR,
-            BACKUP_DIR,
-            TEMP_DIR,
+            paths["processed_dir"],
+            paths["failed_dir"],
+            paths["normalized_dir"],
+            paths["duplicate_index_dir"],
+            paths["duplicate_index_backup_dir"],
+            paths["temp_dir"],
         ):
             os.makedirs(d, exist_ok=True)
 
@@ -112,9 +106,8 @@ def main() -> None:
             completion.finalize(
                 context,
                 exit_code=65,
-                move_suffix="-failed.csv",
-                normalized_suffix=None,
-                transformed_rows=None,
+                outcome="structure_failed",
+                normalized_rows=None,
                 message="CSV STRUCTURE FAILED",
             )
             return
@@ -122,140 +115,116 @@ def main() -> None:
         log_event(logfile_path, "CSV structure/content check PASSED")
 
         # Load duplicate index
-        duplicate_index: Dict[str, List[Dict[str, Any]]] = load_duplicate_index(DUPLICATE_INDEX_PATH)
+        duplicate_index: Dict[str, List[Dict[str, Any]]] = load_duplicate_index(paths["duplicate_index_csv"])
         log_event(
             logfile_path,
             f"Loaded duplicate index with {sum(len(v) for v in duplicate_index.values())} rows",
         )
 
         failed_any: bool = False
-        transformed_any: bool = False
+        normalized_any: bool = False
 
-        # Prepare temp output writer
-        temp_output_path = os.path.join(TEMP_DIR, f"{run_timestamp}-{csv_filename}.tmp.csv")
-        temp_output_file = open(temp_output_path, "w", newline="", encoding="utf-8")
-        temp_output_writer: Optional[csv.DictWriter] = None
-
-        # Writers for failed rows
-        transform_failed_ref: Dict[str, Any] = {"writer": None, "file": None}
+        # Writers
+        normalize_failed_ref: Dict[str, Any] = {"writer": None, "file": None}
         duplicate_failed_ref: Dict[str, Any] = {"writer": None, "file": None}
+        temp_normalized_ref: Dict[str, Any] = {"writer": None, "file": None}
 
-        transform_failed_path: str = os.path.join(
-            FAILED_DIR,
-            f"{run_timestamp}-{csv_filename}-transform-failed_rows.csv",
-        )
-        duplicate_failed_path: str = os.path.join(
-            FAILED_DIR,
-            f"{run_timestamp}-{csv_filename}-duplicate_rows.csv",
-        )
-
-        # Update context now that temp_output_path and writers exist
-        context["temp_output_path"] = temp_output_path
         context["open_writers"] = [
-            {"file": temp_output_file},
-            transform_failed_ref,
+            temp_normalized_ref,
+            normalize_failed_ref,
             duplicate_failed_ref,
         ]
 
+        # -----------------------------------------------------------------
         # Row processing loop
+        # -----------------------------------------------------------------
         for csv_row in csv_rows:
-            # Transform
+            # Normalize single row
             try:
-                transformed_row: Dict[str, Any] = transform_row(csv_row)
+                normalized_row: Dict[str, Any] = normalize_row(csv_row)
             except Exception:
                 failed_any = True
-                w = ensure_writer(transform_failed_path, transform_failed_ref, list(csv_row.keys()))
-                w.writerow(csv_row)
-                log_event(logfile_path, "Transform failed for a row")
+                write_failed_row(paths["failed_normalize_csv"], normalize_failed_ref, csv_row)
+                log_event(logfile_path, "Normalize failed for a row")
                 continue
 
-            key: Optional[str] = extract_key(transformed_row)
+            key: Optional[str] = extract_key(normalized_row)
             if not key:
                 failed_any = True
-                w = ensure_writer(transform_failed_path, transform_failed_ref, list(csv_row.keys()))
-                w.writerow(csv_row)
+                write_failed_row(paths["failed_normalize_csv"], normalize_failed_ref, normalized_row)
                 log_event(logfile_path, "Missing BANKREFERENTIE for a row")
                 continue
 
             # Duplicate check
-            existing_rows: List[Dict[str, Any]] = duplicate_index.get(key, [])
-            if any(r == transformed_row for r in existing_rows):
+            status = classify_duplicate(duplicate_index, key, normalized_row)
+
+            if status == "identical":
                 log_event(logfile_path, f"IGNORED identical row with key {key}")
                 continue
 
-            if existing_rows:
+            if status == "conflict":
                 failed_any = True
-                w = ensure_writer(duplicate_failed_path, duplicate_failed_ref, list(transformed_row.keys()))
-                w.writerow(transformed_row)
+                write_failed_row(paths["failed_duplicate_csv"], duplicate_failed_ref, normalized_row)
                 log_event(logfile_path, f"DUPLICATE key (non-identical) {key}")
                 continue
 
-            # Valid transformed row
-            transformed_any = True
-            if temp_output_writer is None:
-                temp_output_writer = csv.DictWriter(
-                    temp_output_file,
-                    fieldnames=list(transformed_row.keys()),
-                )
-                temp_output_writer.writeheader()
-            temp_output_writer.writerow(transformed_row)
+            # Valid normalized row
+            normalized_any = True
+            temp_output_writer = ensure_writer(
+                paths["temp_normalized_csv"],
+                temp_normalized_ref,
+                list(normalized_row.keys()),
+            )
+            temp_output_writer.writerow(normalized_row)
 
-        # Final classification
-        if failed_any and not transformed_any:
+        # Final classification:
+        # - Key-duplicates count as failures
+        # - Full-duplicates are ignored unless every row is a full-duplicate (all_full_duplicates)
+        if failed_any and not normalized_any:
             completion.finalize(
                 context,
                 exit_code=65,
-                move_suffix="-failed.csv",
-                normalized_suffix=None,
-                transformed_rows=None,
-                message="CSV FAILED (ALL ROWS)",
+                outcome="all_failed",
+                normalized_rows=None,
+                message="CSV ALL FAILED",
             )
             return
 
-        if failed_any and transformed_any:
-            transformed_rows = load_transformed_rows(temp_output_path)
+        if failed_any and normalized_any:
             completion.finalize(
                 context,
                 exit_code=75,
-                move_suffix="-partial.csv",
-                normalized_suffix="-partial.csv",
-                transformed_rows=transformed_rows,
+                outcome="partial",
+                normalized_rows=load_normalized_rows(paths["temp_normalized_csv"]),
                 message="CSV PARTIAL SUCCESS",
             )
             return
 
-        if not failed_any and transformed_any:
-            transformed_rows = load_transformed_rows(temp_output_path)
+        if not failed_any and normalized_any:
             completion.finalize(
                 context,
                 exit_code=0,
-                move_suffix=".csv",
-                normalized_suffix=".csv",
-                transformed_rows=transformed_rows,
+                outcome="success",
+                normalized_rows=load_normalized_rows(paths["temp_normalized_csv"]),
                 message="CSV SUCCESS",
             )
             return
 
-        # All duplicates
-        completion.finalize(
-            context,
-            exit_code=0,
-            move_suffix=".csv",
-            normalized_suffix=None,
-            transformed_rows=None,
-            message="CSV FULL DUPLICATES",
-        )
+        if not failed_any and not normalized_any:
+            completion.finalize(
+                context,
+                exit_code=0,
+                outcome="all_full_duplicates",
+                normalized_rows=None,
+                message="CSV ALL FULL DUPLICATES",
+            )
 
     except Exception as e:
-        # context already exists; ensure temp_output_path is set
-        context["temp_output_path"] = temp_output_path
-
         completion.finalize(
             context,
             exit_code=99,
-            move_suffix="-failed.csv",
-            normalized_suffix=None,
-            transformed_rows=None,
+            outcome="error",
+            normalized_rows=None,
             message=f"UNEXPECTED ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
         )
 

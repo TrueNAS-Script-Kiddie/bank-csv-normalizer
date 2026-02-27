@@ -18,7 +18,6 @@ import traceback
 from typing import Any, Dict, List, Optional
 
 from core.duplicate_index import (
-    append_to_duplicate_index,
     create_updated_duplicate_index,
     rotate_duplicate_backups,
 )
@@ -75,47 +74,35 @@ def close_open_writers(context: Dict[str, Any]) -> None:
 def finalize(
     context: Dict[str, Any],
     exit_code: int,
-    move_suffix: str,
-    normalized_suffix: Optional[str],
-    transformed_rows: Optional[List[Dict[str, Any]]],
+    outcome: str,
+    normalized_rows: Optional[List[Dict[str, Any]]],
     message: str,
 ) -> None:
     """
     Perform all end-of-processing operations.
-    This is the ONLY exit path for the entire processing flow.
+    This is the single exit path for the entire processing flow.
     """
 
-    # Extract context fields
+    paths = context["paths"]
     csv_file_path = context["csv_file_path"]
     csv_filename = context["csv_filename"]
     run_timestamp = context["run_timestamp"]
     logfile_path = context["logfile_path"]
-    temp_output_path = context["temp_output_path"]
-
-    dirs = context["directories"]
-    PROCESSED_DIR = dirs["processed"]
-    FAILED_DIR = dirs["failed"]
-    NORMALIZED_DIR = dirs["normalized"]
-    TEMP_DIR = dirs["temp"]
-    DUPLICATE_INDEX_PATH = dirs["duplicate_index"]
-    BACKUP_DIR = dirs["backup"]
 
     # ----------------------------------------------------------------------
-    # 1. PREPARE DUPLICATE-INDEX UPDATE (NOT CRITICAL)
+    # 1. Prepare duplicate-index update (not critical)
     # ----------------------------------------------------------------------
     updated_duplicate_index = None
-    previous_duplicate_index = None
 
     try:
-        if transformed_rows:
+        if normalized_rows:
             updated_duplicate_index = create_updated_duplicate_index(
-                DUPLICATE_INDEX_PATH,
-                BACKUP_DIR,
+                paths["duplicate_index_csv"],
+                paths["duplicate_index_backup_dir"],
                 run_timestamp,
                 csv_filename,
-                transformed_rows,
+                normalized_rows,
             )
-
     except Exception as e:
         log_email_exit(
             context,
@@ -124,21 +111,21 @@ def finalize(
         )
 
     # ----------------------------------------------------------------------
-    # 2. MOVE ORIGINAL CSV (CRITICAL)
+    # 2. Move original CSV (critical)
     # ----------------------------------------------------------------------
     try:
-        final_csv_path = os.path.join(
-            PROCESSED_DIR,
-            f"{run_timestamp}-{csv_filename}{move_suffix}",
-        )
+        if outcome in ("structure_failed", "all_failed", "error"):
+            final_csv_path = paths["processed_failed_csv"]
+        elif outcome == "partial":
+            final_csv_path = paths["processed_partial_csv"]
+        else:
+            final_csv_path = paths["processed_success_csv"]
+
         shutil.move(csv_file_path, final_csv_path)
+
     except Exception as e:
-        failed_path = os.path.join(
-            FAILED_DIR,
-            f"{run_timestamp}-{csv_filename}-failed.csv"
-        )
         try:
-            shutil.move(csv_file_path, failed_path)
+            shutil.move(csv_file_path, paths["processed_failed_csv"])
         except Exception:
             pass
 
@@ -149,32 +136,20 @@ def finalize(
         )
 
     # ----------------------------------------------------------------------
-    # 3. COMMIT DUPLICATE-INDEX (CRITICAL)
+    # 3. Commit duplicate-index (critical)
     # ----------------------------------------------------------------------
     try:
-        if transformed_rows:
-            # Create restore copy of current dup-index (in TEMP_DIR)
-            previous_duplicate_index = os.path.join(
-                TEMP_DIR,
-                "previous-duplicate-index.csv"
-            )
-
-            # if dup-index does not exist, create empty restore
-            if os.path.exists(DUPLICATE_INDEX_PATH):
-                shutil.copy2(DUPLICATE_INDEX_PATH, previous_duplicate_index)
+        if normalized_rows:
+            if os.path.exists(paths["duplicate_index_csv"]):
+                shutil.copy2(paths["duplicate_index_csv"], paths["duplicate_index_previous_csv"])
             else:
-                open(previous_duplicate_index, "w", encoding="utf-8").close()
+                open(paths["duplicate_index_previous_csv"], "w", encoding="utf-8").close()
 
-            # Commit new dup-index
-            shutil.copyfile(updated_duplicate_index, DUPLICATE_INDEX_PATH)
+            shutil.copyfile(updated_duplicate_index, paths["duplicate_index_csv"])
 
     except Exception as e:
-        failed_path = os.path.join(
-            FAILED_DIR,
-            f"{run_timestamp}-{csv_filename}-failed.csv"
-        )
         try:
-            shutil.move(final_csv_path, failed_path)
+            shutil.move(final_csv_path, paths["processed_failed_csv"])
         except Exception:
             pass
 
@@ -185,30 +160,28 @@ def finalize(
         )
 
     # ----------------------------------------------------------------------
-    # 4. MOVE NORMALIZED OUTPUT (FINAL COMMIT STEP — CRITICAL)
+    # 4. Move normalized output (critical)
     # ----------------------------------------------------------------------
     try:
-        if normalized_suffix is not None and temp_output_path:
-            normalized_output_path = os.path.join(
-                NORMALIZED_DIR,
-                f"{run_timestamp}-{csv_filename}{normalized_suffix}",
-            )
-            shutil.move(temp_output_path, normalized_output_path)
+        if outcome == "partial":
+            normalized_target = paths["normalized_partial_csv"]
+        elif outcome == "success":
+            normalized_target = paths["normalized_success_csv"]
+        else:
+            normalized_target = None
+
+        if normalized_target and os.path.exists(paths["temp_normalized_csv"]):
+            shutil.move(paths["temp_normalized_csv"], normalized_target)
 
     except Exception as e:
-        # Rollback dup-index to restore copy
-        if previous_duplicate_index:
+        if os.path.exists(paths["duplicate_index_previous_csv"]):
             try:
-                shutil.copyfile(previous_duplicate_index, DUPLICATE_INDEX_PATH)
+                shutil.copyfile(paths["duplicate_index_previous_csv"],paths["duplicate_index_csv"])
             except Exception:
                 pass
 
-        failed_path = os.path.join(
-            FAILED_DIR,
-            f"{run_timestamp}-{csv_filename}-failed.csv"
-        )
         try:
-            shutil.move(final_csv_path, failed_path)
+            shutil.move(final_csv_path, paths["processed_failed_csv"])
         except Exception:
             pass
 
@@ -219,31 +192,31 @@ def finalize(
         )
 
     # ----------------------------------------------------------------------
-    # 5. ROTATION (NOT CRITICAL)
+    # 5. Rotate duplicate-index backups (not critical)
     # ----------------------------------------------------------------------
     try:
         rotate_duplicate_backups(
-            BACKUP_DIR,
-            lambda p, m: None,
+            paths["duplicate_index_backup_dir"],
+            context["log_event"],
             logfile_path,
         )
     except Exception:
         pass
 
     # ----------------------------------------------------------------------
-    # 6. CLOSE WRITERS
+    # 6. Close writers
     # ----------------------------------------------------------------------
     close_open_writers(context)
 
     # ----------------------------------------------------------------------
-    # 7. CLEANUP TEMP
+    # 7. Cleanup temp directory
     # ----------------------------------------------------------------------
     try:
-        shutil.rmtree(TEMP_DIR, ignore_errors=True)
+        shutil.rmtree(paths["temp_dir"], ignore_errors=True)
     except Exception:
         pass
 
     # ----------------------------------------------------------------------
-    # 8. FINAL LOG + EMAIL + EXIT
+    # 8. Final log + email + exit
     # ----------------------------------------------------------------------
     log_email_exit(context, exit_code, message)

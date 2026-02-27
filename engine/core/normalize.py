@@ -2,13 +2,13 @@ from typing import Dict
 
 
 # ---------------------------------------------------------------------------
-# Transform a single row
+# Normalize a single row
 # ---------------------------------------------------------------------------
-def transform_row(csv_row: Dict[str, str]) -> Dict[str, str]:
+def normalize_row(csv_row: Dict[str, str]) -> Dict[str, str]:
     """
-    Apply transformation logic to a single CSV row.
-    Expand this with real transformation rules.
+    Apply normalization logic to a single CSV row.
+    Expand this with real normalization rules.
     """
     row = dict(csv_row) # shallow copy 
-    # TODO: implement real transformation logic on `row` 
+    # TODO: implement real normalization logic on `row` 
     return row
