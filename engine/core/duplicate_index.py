@@ -40,7 +40,7 @@ def load_duplicate_index(duplicate_index_path: str) -> DefaultDict[str, List[Dic
         return index
 
     with open(duplicate_index_path, newline="", encoding="utf-8") as index_file:
-        reader = csv.DictReader(index_file)
+        reader = csv.DictReader(index_file, delimiter=';')
 
         for row in reader:
             key = (row.get("duplicate_key") or "").strip()
@@ -53,24 +53,25 @@ def load_duplicate_index(duplicate_index_path: str) -> DefaultDict[str, List[Dic
 # ---------------------------------------------------------------------------
 # Append new rows to updated_duplicate_index
 # ---------------------------------------------------------------------------
-def append_to_duplicate_index(duplicate_index_path: str, normalized_rows: List[Dict[str, str]]) -> None:
+def append_to_duplicate_index(duplicate_index_path: str, duplicate_index_rows: List[Dict[str, str]]) -> None:
     """
-    Append normalized rows to the updated_duplicate_index.
+    Append new duplicate-index rows to the updated duplicate-index file.
     Creates the file with header if it does not exist.
     """
-    if not normalized_rows:
+
+    if not duplicate_index_rows:
         return
 
     file_exists = os.path.exists(duplicate_index_path)
-    fieldnames = list(normalized_rows[0].keys())
+    fieldnames = list(duplicate_index_rows[0].keys())
 
     with open(duplicate_index_path, "a", newline="", encoding="utf-8") as index_file:
-        writer = csv.DictWriter(index_file, fieldnames=fieldnames)
+        writer = csv.DictWriter(index_file, fieldnames=fieldnames, delimiter=';')
 
         if not file_exists:
             writer.writeheader()
 
-        for row in normalized_rows:
+        for row in duplicate_index_rows:
             writer.writerow(row)
 
 
@@ -82,33 +83,29 @@ def create_updated_duplicate_index(
     backup_dir: str,
     run_timestamp: str,
     csv_filename: str,
-    normalized_rows: List[Dict[str, str]],
+    duplicate_index_rows: List[Dict[str, str]],
 ) -> str:
     """
     Create a timestamped updated duplicate-index file:
     - Copy existing duplicate-index.csv if present
     - Otherwise create empty base
-    - Append normalized_rows
+    - Append duplicate_index_rows
     Returns the path to the updated duplicate index file.
     """
 
-    import os
-    import shutil
-
     # Path for updated snapshot
+    bank_name = os.path.splitext(os.path.basename(duplicate_index_path))[0].replace("-duplicate-index", "")
     updated_duplicate_index = os.path.join(
         backup_dir,
-        f"{run_timestamp}-{csv_filename}-duplicate-index.csv"
+        f"{run_timestamp}-{os.path.splitext(csv_filename)[0]}-{bank_name}-duplicate-index.csv"
     )
 
     # Base: existing dup-index or empty file
     if os.path.exists(duplicate_index_path):
         shutil.copy2(duplicate_index_path, updated_duplicate_index)
-    else:
-        open(updated_duplicate_index, "w", encoding="utf-8").close()
 
     # Append new rows
-    append_to_duplicate_index(updated_duplicate_index, normalized_rows)
+    append_to_duplicate_index(updated_duplicate_index, duplicate_index_rows)
 
     return updated_duplicate_index
 

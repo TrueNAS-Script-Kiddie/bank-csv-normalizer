@@ -11,6 +11,12 @@ PYTHON_MODULE="engine.process_csv"
 
 LOCKFILE_PATH="${BASE_DIR}/.process.lock"
 
+# Ensure Python can import the engine/ package (cron has no PYTHONPATH)
+export PYTHONPATH="${BASE_DIR}"
+
+# Ensure working directory is the project root (cron starts in /)
+cd "${BASE_DIR}" || exit 1
+
 # Always remove lockfile, even on crash
 cleanup() {
     rm -f "${LOCKFILE_PATH}"
@@ -28,7 +34,7 @@ for FILE_PATH in "${IN_DIR}"/*.csv; do
     RUN_TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
     LOGFILE_PATH="${LOG_DIR}/${RUN_TIMESTAMP}-${FILENAME}.log"
 
-    echo -n "$(date '+%F %T') Processing file ${FILENAME}... " >> "${LOGFILE_PATH}"
+    echo "$(date '+%F %T') Processing file ${FILENAME}... " >> "${LOGFILE_PATH}"
 
     # Avoid processing files still being uploaded
     # --- NEW: size-stabilisatie ---
@@ -37,7 +43,7 @@ for FILE_PATH in "${IN_DIR}"/*.csv; do
     SIZE2=$(stat -c%s "${FILE_PATH}")
 
     if [[ "${SIZE1}" -ne "${SIZE2}" ]]; then
-        echo "Skipped (file still growing)" >> "${LOGFILE_PATH}"
+        echo "$(date '+%F %T') Skipped (file still growing)" >> "${LOGFILE_PATH}"
         continue
     fi
     # --- END NEW ---
@@ -53,13 +59,13 @@ for FILE_PATH in "${IN_DIR}"/*.csv; do
         1)
             # Python crashed before cleanup → bash must move the file
             [[ -f "${FILE_PATH}" ]] && mv "${FILE_PATH}" "${FAILED_DIR}/${RUN_TIMESTAMP}-${FILENAME}-failed.csv"
-            echo "${PYTHONSCRIPT_FILENAME} crashed before cleanup (exit code 1)." >> "${LOGFILE_PATH}"
+            echo "$(date '+%F %T') ${PYTHONSCRIPT_FILENAME} crashed before cleanup (exit code 1)." >> "${LOGFILE_PATH}"
             ;;
 
         *)
             # Unknown exit code → treat as Python crash
             [[ -f "${FILE_PATH}" ]] && mv "${FILE_PATH}" "${FAILED_DIR}/${RUN_TIMESTAMP}-${FILENAME}-failed.csv"
-            echo "${PYTHONSCRIPT_FILENAME} exited with unknown code ${EXIT_CODE}." >> "${LOGFILE_PATH}"
+            echo "$(date '+%F %T') ${PYTHONSCRIPT_FILENAME} exited with unknown code ${EXIT_CODE}." >> "${LOGFILE_PATH}"
             ;;
     esac
 done

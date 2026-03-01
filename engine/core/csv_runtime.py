@@ -14,7 +14,7 @@ Nothing more, nothing less.
 import csv
 import os
 import yaml
-from typing import Any, Dict, List 
+from typing import Any, Dict, List
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +27,11 @@ def build_paths(
 ) -> Dict[str, str]:
     """
     Construct all directory and file paths for a single pipeline run.
+
+    Note:
+    - duplicate_index_csv is a placeholder here.
+      The real bank-specific path is set later in process_csv.py
+      once the bank is known.
     """
 
     return {
@@ -39,8 +44,8 @@ def build_paths(
         "duplicate_index_dir": os.path.join(data_dir, "duplicate-index"),
         "duplicate_index_backup_dir": os.path.join(data_dir, "duplicate-index", "backups"),
 
-        # Duplicate index
-        "duplicate_index_csv": os.path.join(data_dir, "duplicate-index", "duplicate-index.csv"),
+        # Duplicate index (placeholder, overwritten later)
+        "duplicate_index_csv": os.path.join(data_dir, "duplicate-index", "UNSET.csv"),
         "duplicate_index_previous_csv": os.path.join(data_dir, "temp", "previous-duplicate-index.csv"),
 
         # Temporary normalized output
@@ -104,10 +109,8 @@ def load_csv_rows(csv_file_path: str) -> List[Dict[str, str]]:
     # ------------------------------------------------------------
     # 2. Detect delimiter
     # ------------------------------------------------------------
-    sample = file_text[:4096]
-
     try:
-        detected_dialect = csv.Sniffer().sniff(sample)
+        detected_dialect = csv.Sniffer().sniff(file_text[:4096])
     except csv.Error:
         detected_dialect = csv.excel
         detected_dialect.delimiter = ";"
@@ -119,7 +122,6 @@ def load_csv_rows(csv_file_path: str) -> List[Dict[str, str]]:
 
     with open(csv_file_path, "r", encoding=used_encoding, newline="") as f:
         reader = csv.DictReader(f, dialect=detected_dialect)
-
         for row in reader:
             cleaned_row = {k: (v if v is not None else "") for k, v in row.items()}
             rows.append(cleaned_row)
@@ -135,13 +137,10 @@ def ensure_writer(
     writer_ref: Dict[str, Any],
     fieldnames: List[str]
 ) -> csv.DictWriter:
-    """
-    Lazily create a CSV writer and file handle.
-    Ensures headers are written exactly once.
-    """
+    """Lazily create a CSV writer and file handle. Headers written once."""
     if writer_ref.get("writer") is None:
         f = open(path, "w", newline="", encoding="utf-8")
-        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
         w.writeheader()
         writer_ref["writer"] = w
         writer_ref["file"] = f
@@ -150,12 +149,10 @@ def ensure_writer(
 
 
 # ---------------------------------------------------------------------------
-# Write a failed row to the appropriate failure CSV
+# Write a failed row
 # ---------------------------------------------------------------------------
 def write_failed_row(path: str, writer_ref: Dict[str, Any], row: Dict[str, Any]) -> None:
-    """
-    Write a failed row to the given CSV file, creating the writer on first use.
-    """
+    """Write a failed row to the given CSV file."""
     writer = ensure_writer(path, writer_ref, list(row.keys()))
     writer.writerow(row)
 
@@ -166,9 +163,12 @@ def write_failed_row(path: str, writer_ref: Dict[str, Any], row: Dict[str, Any])
 def load_normalized_rows(path: str) -> List[Dict[str, Any]]:
     """Load all normalized rows from a temporary output file."""
     with open(path, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+        return list(csv.DictReader(f, delimiter=';'))
 
 
+# ---------------------------------------------------------------------------
+# Load all bank configs
+# ---------------------------------------------------------------------------
 def load_all_bank_configs(config_dir: str) -> Dict[str, Dict[str, Any]]:
     """
     Load all YAML bank configuration files from the given directory.

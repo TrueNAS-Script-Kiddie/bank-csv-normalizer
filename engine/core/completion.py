@@ -89,19 +89,27 @@ def finalize(
     run_timestamp = context["run_timestamp"]
     logfile_path = context["logfile_path"]
 
+    # Rows that must be added to the duplicate-index for this run.
+    # These are prepared in process_csv.py and are independent of normalized output.
+    duplicate_index_rows_to_add: List[Dict[str, Any]] = context.get(
+        "duplicate_index_rows_to_add", []
+    )
+
     # ----------------------------------------------------------------------
     # 1. Prepare duplicate-index update (not critical)
     # ----------------------------------------------------------------------
     updated_duplicate_index = None
 
     try:
-        if normalized_rows:
+        # Only prepare an updated duplicate-index snapshot when there are
+        # new rows to add. Full-duplicate-only runs do not change the index.
+        if duplicate_index_rows_to_add:
             updated_duplicate_index = create_updated_duplicate_index(
                 paths["duplicate_index_csv"],
                 paths["duplicate_index_backup_dir"],
                 run_timestamp,
                 csv_filename,
-                normalized_rows,
+                duplicate_index_rows_to_add,
             )
     except Exception as e:
         log_email_exit(
@@ -139,9 +147,13 @@ def finalize(
     # 3. Commit duplicate-index (critical)
     # ----------------------------------------------------------------------
     try:
-        if normalized_rows:
+        # Commit only when an updated duplicate-index snapshot was created.
+        if duplicate_index_rows_to_add and updated_duplicate_index:
             if os.path.exists(paths["duplicate_index_csv"]):
-                shutil.copy2(paths["duplicate_index_csv"], paths["duplicate_index_previous_csv"])
+                shutil.copy2(
+                    paths["duplicate_index_csv"],
+                    paths["duplicate_index_previous_csv"],
+                )
             else:
                 open(paths["duplicate_index_previous_csv"], "w", encoding="utf-8").close()
 
@@ -176,7 +188,10 @@ def finalize(
     except Exception as e:
         if os.path.exists(paths["duplicate_index_previous_csv"]):
             try:
-                shutil.copyfile(paths["duplicate_index_previous_csv"],paths["duplicate_index_csv"])
+                shutil.copyfile(
+                    paths["duplicate_index_previous_csv"],
+                    paths["duplicate_index_csv"],
+                )
             except Exception:
                 pass
 

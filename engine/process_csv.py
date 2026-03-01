@@ -127,6 +127,14 @@ def main() -> None:
         log_event(logfile_path, f"Detected bank: {bank_cfg['bank']}")
 
         # -----------------------------------------------------------------
+        # Set bank-specific duplicate-index path
+        # -----------------------------------------------------------------
+        paths["duplicate_index_csv"] = os.path.join(
+            paths["duplicate_index_dir"],
+            f"{bank_cfg['bank']}-duplicate-index.csv",
+        )
+
+        # -----------------------------------------------------------------
         # Validate + map + filter rows
         # -----------------------------------------------------------------
         validated_rows, column_map = validate_and_prepare(csv_rows, bank_cfg)
@@ -143,7 +151,7 @@ def main() -> None:
             return
 
         # -----------------------------------------------------------------
-        # Load duplicate index
+        # Load duplicate index (bank-specific)
         # -----------------------------------------------------------------
         duplicate_index = load_duplicate_index(paths["duplicate_index_csv"])
         log_event(
@@ -156,6 +164,13 @@ def main() -> None:
         # -----------------------------------------------------------------
         failed_any = False
         normalized_any = False
+
+        # Rows that must be added to the duplicate-index
+        duplicate_index_rows_to_add: List[Dict[str, Any]] = []
+        context["duplicate_index_rows_to_add"] = duplicate_index_rows_to_add
+
+        # Required fields for duplicate-index rows
+        duplicate_index_required_fields = list(bank_cfg["columns"]["required"].keys())
 
         # -----------------------------------------------------------------
         # Initialize writers
@@ -180,7 +195,7 @@ def main() -> None:
             if not key:
                 failed_any = True
                 write_failed_row(paths["failed_duplicate_csv"], duplicate_failed_ref, row)
-                log_event(logfile_path, "Missing duplicate_key for the row {row}")
+                log_event(logfile_path, f"Missing duplicate_key for row: {row}")
                 continue
 
             # Duplicate check
@@ -195,6 +210,12 @@ def main() -> None:
                 write_failed_row(paths["failed_duplicate_csv"], duplicate_failed_ref, row)
                 log_event(logfile_path, f"DUPLICATE key (non-identical) {key}")
                 continue
+
+            # NEW ROW → add to duplicate-index list
+            duplicate_index_row = {"duplicate_key": key}
+            for field in duplicate_index_required_fields:
+                duplicate_index_row[field] = row.get(field, "")
+            duplicate_index_rows_to_add.append(duplicate_index_row)
 
             # Normalize row
             try:
