@@ -217,6 +217,9 @@ def main() -> None:
                 duplicate_index_row[field] = row.get(field, "")
             duplicate_index_rows_to_add.append(duplicate_index_row)
 
+            # Update in-memory duplicate index so later rows see this one
+            duplicate_index.setdefault(key, []).append(duplicate_index_row)
+
             # Normalize row
             try:
                 normalized_row = normalize_row(row)
