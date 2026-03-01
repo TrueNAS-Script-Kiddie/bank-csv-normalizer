@@ -1,0 +1,53 @@
+bank: fintro
+
+columns:
+  required:
+    execution_date:
+      names: ["Uitvoeringsdatum"]
+      regex: "^[0-9]{2}/[0-9]{2}/[0-9]{4}$"
+
+    value_date:
+      names: ["Valutadatum"]
+      regex: "^[0-9]{2}/[0-9]{2}/[0-9]{4}$"
+
+    amount:
+      names: ["Bedrag"]
+      regex: "^-?[0-9]+([.,][0-9]+)?$"
+
+    currency:
+      names: ["Valuta rekening"]
+      regex: "^.+$"
+
+    account_iban:
+      names: ["Rekeningnummer"]
+      regex: "^[A-Z]{2}[0-9A-Z]{13,30}$"
+
+    transaction_type:
+      names: ["Type verrichting"]
+
+    counterparty:
+      names: ["Tegenpartij"]
+
+    counterparty_name:
+      names: ["Naam van de tegenpartij"]
+
+    message:
+      names: ["Mededeling"]
+
+    details_raw:
+      names: ["Details"]
+
+    status:
+      names: ["Status"]
+      filter: ["Geaccepteerd"]
+
+  optional:
+    bank_sequence_number:
+      names: ["Volgnummer"]
+
+    reject_reason:
+      names: ["Reden van weigering"]
+
+duplicate_key:
+  columns: ["details_raw"]
+  regex: "BANKREFERENTIE\\s*:\\s*([0-9]{16})"

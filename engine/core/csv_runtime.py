@@ -13,7 +13,8 @@ Nothing more, nothing less.
 
 import csv
 import os
-from typing import Any, Dict, List, Optional
+import yaml
+from typing import Any, Dict, List 
 
 
 # ---------------------------------------------------------------------------
@@ -64,42 +65,66 @@ def build_paths(
 # Load CSV
 # ---------------------------------------------------------------------------
 def load_csv_rows(csv_file_path: str) -> List[Dict[str, str]]:
-    """Load CSV rows as a list of dictionaries."""
+    """
+    Load CSV rows into a list of dictionaries.
+
+    Encoding strategy:
+    - Try UTF-8 first (most common)
+    - Fallback to Windows-1252 (most common non-UTF-8 in BE/NL)
+    - Fallback to UTF-16 (Excel "Unicode Text")
+
+    Delimiter strategy:
+    - Auto-detect via csv.Sniffer()
+    - Fallback to semicolon
+
+    Returns:
+        List of dicts with raw column names.
+    """
+
+    # ------------------------------------------------------------
+    # 1. Try reading file with different encodings
+    # ------------------------------------------------------------
+    encodings_to_try = ["utf-8", "cp1252", "utf-16"]
+
+    file_text = None
+    used_encoding = None
+
+    for enc in encodings_to_try:
+        try:
+            with open(csv_file_path, "r", encoding=enc) as f:
+                file_text = f.read()
+            used_encoding = enc
+            break
+        except UnicodeDecodeError:
+            continue
+
+    if file_text is None:
+        raise ValueError("Unable to decode CSV file with utf-8, cp1252, or utf-16.")
+
+    # ------------------------------------------------------------
+    # 2. Detect delimiter
+    # ------------------------------------------------------------
+    sample = file_text[:4096]
+
+    try:
+        detected_dialect = csv.Sniffer().sniff(sample)
+    except csv.Error:
+        detected_dialect = csv.excel
+        detected_dialect.delimiter = ";"
+
+    # ------------------------------------------------------------
+    # 3. Parse CSV using detected encoding + dialect
+    # ------------------------------------------------------------
     rows: List[Dict[str, str]] = []
 
-    with open(csv_file_path, newline="", encoding="utf-8") as csv_file:
-        reader = csv.DictReader(csv_file)
+    with open(csv_file_path, "r", encoding=used_encoding, newline="") as f:
+        reader = csv.DictReader(f, dialect=detected_dialect)
+
         for row in reader:
-            rows.append(row)
+            cleaned_row = {k: (v if v is not None else "") for k, v in row.items()}
+            rows.append(cleaned_row)
 
     return rows
-
-
-# ---------------------------------------------------------------------------
-# Validate CSV structure
-# ---------------------------------------------------------------------------
-def validate_csv_structure(csv_rows: List[Dict[str, str]]) -> bool:
-    """
-    Validate that the CSV contains the required columns.
-    Extend this list as needed.
-    """
-    if not csv_rows:
-        return False
-
-    required_columns = ["BANKREFERENTIE"]
-    return all(column in csv_rows[0] for column in required_columns)
-
-
-# ---------------------------------------------------------------------------
-# Extract unique key for duplicate detection
-# ---------------------------------------------------------------------------
-def extract_key(csv_row: Dict[str, str]) -> Optional[str]:
-    """
-    Extract the unique key used for duplicate detection.
-    Returns None if missing or empty.
-    """
-    key = (csv_row.get("BANKREFERENTIE") or "").strip()
-    return key or None
 
 
 # ---------------------------------------------------------------------------
@@ -142,3 +167,29 @@ def load_normalized_rows(path: str) -> List[Dict[str, Any]]:
     """Load all normalized rows from a temporary output file."""
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
+
+
+def load_all_bank_configs(config_dir: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Load all YAML bank configuration files from the given directory.
+    Returns a dict: bank_name -> config_dict
+    """
+
+    configs: Dict[str, Dict[str, Any]] = {}
+
+    for filename in os.listdir(config_dir):
+        if not filename.endswith(".yaml"):
+            continue
+
+        full_path = os.path.join(config_dir, filename)
+
+        with open(full_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+
+        bank_name = cfg.get("bank")
+        if not bank_name:
+            raise ValueError(f"Config file {filename} has no 'bank' field.")
+
+        configs[bank_name] = cfg
+
+    return configs

@@ -15,6 +15,7 @@ Functions included:
 
 import os
 import subprocess
+import json
 from datetime import datetime
 from typing import Dict, List
 
@@ -75,39 +76,39 @@ def load_env(path: str) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 # Email via system sendmail (TrueNAS compatible)
 # ---------------------------------------------------------------------------
-def send_email(
-    subject: str,
-    body: str,
-    log_event,
-    logfile_path: str,
-) -> None:
+def send_email(subject: str, body: str, log_event, logfile_path: str) -> None:
     """
-    Send an email using the system's sendmail binary.
+    Send an email through TrueNAS using midclt.
 
-    - Compatible with TrueNAS system email configuration.
-    - Recipients are loaded from CONFIG["EMAIL_TO"].
-    - Logging is used only on error.
-    - Never interrupts the pipeline.
+    The subject is flattened and truncated to avoid validation errors.
+    The body is truncated to stay within TrueNAS mail API limits.
     """
+
     try:
-        email_to = CONFIG.get("EMAIL_TO", "").split(",")
+        # Sanitize subject: no newlines, no control chars, safe length
+        clean_subject = str(subject).replace("\n", " ").replace("\r", " ")
+        clean_subject = clean_subject[:180]
 
-        process = subprocess.Popen(
-            ["/usr/sbin/sendmail", "-t"],
-            stdin=subprocess.PIPE,
+        # Sanitize body: keep it large enough but within safe limits
+        clean_body = str(body)[:8000]
+
+        payload = {
+            "subject": clean_subject,
+            "text": clean_body,
+        }
+
+        json_arg = json.dumps(payload)
+
+        # Call midclt in argv mode (no shell, no quoting issues)
+        subprocess.run(
+            ["/usr/bin/midclt", "call", "mail.send", json_arg],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
-
-        msg = (
-            f"Subject: {subject}\n"
-            f"To: {', '.join(email_to)}\n"
-            f"\n"
-            f"{body}"
-        )
-
-        process.communicate(msg.encode("utf-8"))
 
     except Exception as exc:
-        log_event(logfile_path, f"[EMAIL ERROR] {exc}")
+        log_event(logfile_path, f"[EMAIL ERROR] {exc!r}")
 
 
 # ---------------------------------------------------------------------------

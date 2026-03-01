@@ -17,7 +17,7 @@ import shutil
 import traceback
 from typing import Any, Dict, List, Optional
 
-from core.duplicate_index import (
+from engine.core.duplicate_index import (
     create_updated_duplicate_index,
     rotate_duplicate_backups,
 )

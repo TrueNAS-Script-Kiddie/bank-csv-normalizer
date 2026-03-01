@@ -31,8 +31,9 @@ RUN_TS_FORMAT = "%Y%m%d-%H%M%S"
 def load_duplicate_index(duplicate_index_path: str) -> DefaultDict[str, List[Dict[str, str]]]:
     """
     Load the global duplicate index from CSV.
-    Returns a dict: key → list of rows with that key.
+    Returns a dict: duplicate_key → list of rows with that key.
     """
+
     index: DefaultDict[str, List[Dict[str, str]]] = defaultdict(list)
 
     if not os.path.exists(duplicate_index_path):
@@ -42,7 +43,7 @@ def load_duplicate_index(duplicate_index_path: str) -> DefaultDict[str, List[Dic
         reader = csv.DictReader(index_file)
 
         for row in reader:
-            key = (row.get("BANKREFERENTIE") or "").strip()
+            key = (row.get("duplicate_key") or "").strip()
             if key:
                 index[key].append(row)
 
@@ -176,21 +177,33 @@ def classify_duplicate(
     duplicate_index: Dict[str, List[Dict[str, Any]]],
     key: str,
     row: Dict[str, Any],
+    bank_config: Dict[str, Any],
 ) -> str:
     """
-    Classify a row against the duplicate index.
+    Classify a row against the duplicate index using YAML rules.
 
-    Returns:
-        "identical"  – same key and row already exists
-        "conflict"   – same key but row differs
-        "new"        – key not present
+    identical = all required fields match
+    conflict  = key exists but required fields differ
+    new       = key not present
     """
-    existing = duplicate_index.get(key, [])
 
-    if any(r == row for r in existing):
-        return "identical"
+    existing_rows = duplicate_index.get(key, [])
+    if not existing_rows:
+        return "new"
 
-    if existing:
-        return "conflict"
+    # Determine which fields must match
+    required_fields = list(bank_config["columns"]["required"].keys())
 
-    return "new"
+    for existing in existing_rows:
+        required_match = True
+
+        for field in required_fields:
+            if existing.get(field, "").strip() != row.get(field, "").strip():
+                required_match = False
+                break
+
+        if required_match:
+            return "identical"
+
+    # Key exists, but no required-field match
+    return "conflict"

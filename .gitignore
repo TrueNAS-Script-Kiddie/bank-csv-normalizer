@@ -1,5 +1,5 @@
 .vscode/
-config/*
+config/app.env
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

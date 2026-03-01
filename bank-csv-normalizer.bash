@@ -7,8 +7,7 @@ IN_DIR="${BASE_DIR}/data/incoming"
 FAILED_DIR="${BASE_DIR}/data/failed"
 LOG_DIR="${BASE_DIR}/data/logs"
 
-PYTHONSCRIPT_FILENAME="process_csv.py"
-PYTHONSCRIPT_PATH="${BASE_DIR}/engine/${PYTHONSCRIPT_FILENAME}"
+PYTHON_MODULE="engine.process_csv"
 
 LOCKFILE_PATH="${BASE_DIR}/.process.lock"
 
@@ -43,11 +42,11 @@ for FILE_PATH in "${IN_DIR}"/*.csv; do
     fi
     # --- END NEW ---
 
-    python3 "${PYTHONSCRIPT_PATH}" "${FILE_PATH}" "${RUN_TIMESTAMP}" "${LOGFILE_PATH}"
+    python3 -m "${PYTHON_MODULE}" "${FILE_PATH}" "${RUN_TIMESTAMP}" "${LOGFILE_PATH}"
     EXIT_CODE="${?}"
 
     case "${EXIT_CODE}" in
-        0|65|75)
+        0|65|75|99)
             # Python handled everything → bash does absolutely nothing
             ;;
 

@@ -6,20 +6,24 @@ import traceback
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from core.csv_runtime import (
+from engine.core.csv_runtime import (
     load_csv_rows,
-    validate_csv_structure,
-    extract_key,
     write_failed_row,
     load_normalized_rows,
     build_paths,
     ensure_writer,
+    load_all_bank_configs,
+)
+from engine.core.csv_validation import (
+    autodetect_bank,
+    validate_and_prepare,
+    extract_duplicate_key,
 )
 
 from engine.core.normalize import normalize_row
-from core.duplicate_index import load_duplicate_index, classify_duplicate
+from engine.core.duplicate_index import load_duplicate_index, classify_duplicate
 from engine.core.runtime import log_event
-import core.completion as completion
+import engine.core.completion as completion
 
 
 # -------------------------------------------------------------------------
@@ -27,6 +31,7 @@ import core.completion as completion
 # -------------------------------------------------------------------------
 BASE_DIR: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR: str = os.path.join(BASE_DIR, "data")
+CONFIG_DIR: str = os.path.join(BASE_DIR, "config")
 
 # Globals set in main()
 csv_file_path: str
@@ -67,12 +72,11 @@ def main() -> None:
         "csv_filename": csv_filename,
         "run_timestamp": run_timestamp,
         "logfile_path": logfile_path,
-        "paths": paths,               # canonical
+        "paths": paths,
         "open_writers": [],
         "log_event": log_event,
     }
 
-    # Global try MUST start as early as possible
     try:
         # Ensure directory structure exists
         for d in (
@@ -85,37 +89,80 @@ def main() -> None:
         ):
             os.makedirs(d, exist_ok=True)
 
-        # Load CSV
-        csv_rows: List[Dict[str, Any]] = load_csv_rows(csv_file_path)
-        log_event(logfile_path, f"Loaded {len(csv_rows)} rows")
+        # -----------------------------------------------------------------
+        # Load all bank configs
+        # -----------------------------------------------------------------
+        bank_configs = load_all_bank_configs(CONFIG_DIR)
 
-        # Validate structure
-        if not validate_csv_structure(csv_rows):
+        # -----------------------------------------------------------------
+        # Load CSV
+        # -----------------------------------------------------------------
+        csv_rows: List[Dict[str, Any]] = load_csv_rows(csv_file_path)
+        log_event(logfile_path, f"Loaded {len(csv_rows)} raw rows")
+
+        if not csv_rows:
             completion.finalize(
                 context,
                 exit_code=65,
                 outcome="structure_failed",
                 normalized_rows=None,
-                message="CSV STRUCTURE FAILED",
+                message="CSV EMPTY",
             )
             return
 
-        log_event(logfile_path, "CSV structure/content check PASSED")
+        # -----------------------------------------------------------------
+        # Autodetect bank
+        # -----------------------------------------------------------------
+        bank_cfg = autodetect_bank(csv_rows, bank_configs)
+        if bank_cfg is None:
+            completion.finalize(
+                context,
+                exit_code=65,
+                outcome="structure_failed",
+                normalized_rows=None,
+                message="BANK AUTODETECT FAILED",
+            )
+            return
 
+        log_event(logfile_path, f"Detected bank: {bank_cfg['bank']}")
+
+        # -----------------------------------------------------------------
+        # Validate + map + filter rows
+        # -----------------------------------------------------------------
+        validated_rows, column_map = validate_and_prepare(csv_rows, bank_cfg)
+        log_event(logfile_path, f"Validated {len(validated_rows)} rows after filtering")
+
+        if not validated_rows:
+            completion.finalize(
+                context,
+                exit_code=65,
+                outcome="structure_failed",
+                normalized_rows=None,
+                message="NO VALID ROWS AFTER VALIDATION",
+            )
+            return
+
+        # -----------------------------------------------------------------
         # Load duplicate index
-        duplicate_index: Dict[str, List[Dict[str, Any]]] = load_duplicate_index(paths["duplicate_index_csv"])
+        # -----------------------------------------------------------------
+        duplicate_index = load_duplicate_index(paths["duplicate_index_csv"])
         log_event(
             logfile_path,
             f"Loaded duplicate index with {sum(len(v) for v in duplicate_index.values())} rows",
         )
 
-        failed_any: bool = False
-        normalized_any: bool = False
+        # -----------------------------------------------------------------
+        # Initialize pipeline state
+        # -----------------------------------------------------------------
+        failed_any = False
+        normalized_any = False
 
-        # Writers
-        normalize_failed_ref: Dict[str, Any] = {"writer": None, "file": None}
-        duplicate_failed_ref: Dict[str, Any] = {"writer": None, "file": None}
-        temp_normalized_ref: Dict[str, Any] = {"writer": None, "file": None}
+        # -----------------------------------------------------------------
+        # Initialize writers
+        # -----------------------------------------------------------------
+        normalize_failed_ref = {"writer": None, "file": None}
+        duplicate_failed_ref = {"writer": None, "file": None}
+        temp_normalized_ref = {"writer": None, "file": None}
 
         context["open_writers"] = [
             temp_normalized_ref,
@@ -126,25 +173,18 @@ def main() -> None:
         # -----------------------------------------------------------------
         # Row processing loop
         # -----------------------------------------------------------------
-        for csv_row in csv_rows:
-            # Normalize single row
-            try:
-                normalized_row: Dict[str, Any] = normalize_row(csv_row)
-            except Exception:
-                failed_any = True
-                write_failed_row(paths["failed_normalize_csv"], normalize_failed_ref, csv_row)
-                log_event(logfile_path, "Normalize failed for a row")
-                continue
+        for row in validated_rows:
 
-            key: Optional[str] = extract_key(normalized_row)
+            # Extract duplicate key
+            key = extract_duplicate_key(row, bank_cfg)
             if not key:
                 failed_any = True
-                write_failed_row(paths["failed_normalize_csv"], normalize_failed_ref, normalized_row)
-                log_event(logfile_path, "Missing BANKREFERENTIE for a row")
+                write_failed_row(paths["failed_duplicate_csv"], duplicate_failed_ref, row)
+                log_event(logfile_path, "Missing duplicate_key for the row {row}")
                 continue
 
             # Duplicate check
-            status = classify_duplicate(duplicate_index, key, normalized_row)
+            status = classify_duplicate(duplicate_index, key, row, bank_cfg)
 
             if status == "identical":
                 log_event(logfile_path, f"IGNORED identical row with key {key}")
@@ -152,8 +192,17 @@ def main() -> None:
 
             if status == "conflict":
                 failed_any = True
-                write_failed_row(paths["failed_duplicate_csv"], duplicate_failed_ref, normalized_row)
+                write_failed_row(paths["failed_duplicate_csv"], duplicate_failed_ref, row)
                 log_event(logfile_path, f"DUPLICATE key (non-identical) {key}")
+                continue
+
+            # Normalize row
+            try:
+                normalized_row = normalize_row(row)
+            except Exception:
+                failed_any = True
+                write_failed_row(paths["failed_normalize_csv"], normalize_failed_ref, row)
+                log_event(logfile_path, "Normalize failed for a row")
                 continue
 
             # Valid normalized row
@@ -165,9 +214,9 @@ def main() -> None:
             )
             temp_output_writer.writerow(normalized_row)
 
-        # Final classification:
-        # - Key-duplicates count as failures
-        # - Full-duplicates are ignored unless every row is a full-duplicate (all_full_duplicates)
+        # -----------------------------------------------------------------
+        # Final classification
+        # -----------------------------------------------------------------
         if failed_any and not normalized_any:
             completion.finalize(
                 context,
