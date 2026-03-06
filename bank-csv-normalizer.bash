@@ -32,7 +32,7 @@ for FILE_PATH in "${IN_DIR}"/*.csv; do
 
     # One timestamp/logfile per csv
     RUN_TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
-    LOGFILE_PATH="${LOG_DIR}/${RUN_TIMESTAMP}-${FILENAME}.log"
+    LOGFILE_PATH="${LOG_DIR}/${RUN_TIMESTAMP}-${FILENAME%.csv}.log"
 
     echo "$(date '+%F %T') Processing file ${FILENAME}... " >> "${LOGFILE_PATH}"
 

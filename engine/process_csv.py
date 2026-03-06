@@ -26,6 +26,24 @@ from engine.core.runtime import log_event
 import engine.core.completion as completion
 
 
+NORMALIZED_FIELDNAMES = [
+    "external_id",                 # 1
+    "primary_transaction_date",    # 2
+    "booking_date",                # 3
+    "amount",                      # 4
+    "account_currency_code",       # 5
+    "asset_account_iban",          # 6
+    "asset_account_bic",           # 7
+    "asset_account_name",          # 8
+    "opposing_account_iban",       # 9
+    "opposing_account_bic",        # 10
+    "opposing_account_name",       # 11
+    "description",                 # 12
+    "notes",                       # 13
+    "debug_details_rest",          # 14
+]
+
+
 # -------------------------------------------------------------------------
 # Directory configuration
 # -------------------------------------------------------------------------
@@ -140,6 +158,14 @@ def main() -> None:
         validated_rows, column_map = validate_and_prepare(csv_rows, bank_cfg)
         log_event(logfile_path, f"Validated {len(validated_rows)} rows after filtering")
 
+        # Attach original CSV row for normalize-failed output
+        indexed_validated_rows: List[Dict[str, Any]] = []
+        for idx, vrow in enumerate(validated_rows):
+            vrow["_original_csv_row"] = csv_rows[idx]
+            indexed_validated_rows.append(vrow)
+
+        validated_rows = indexed_validated_rows
+
         if not validated_rows:
             completion.finalize(
                 context,
@@ -188,7 +214,8 @@ def main() -> None:
         # -----------------------------------------------------------------
         # Row processing loop
         # -----------------------------------------------------------------
-        for row in validated_rows:
+        for row_index, row in enumerate(validated_rows, start=1):
+            original_csv_row = row.get("_original_csv_row", row)
 
             # Extract duplicate key
             key = extract_duplicate_key(row, bank_cfg)
@@ -223,10 +250,18 @@ def main() -> None:
             # Normalize row
             try:
                 normalized_row = normalize_row(row)
-            except Exception:
+            except Exception as exc:
                 failed_any = True
-                write_failed_row(paths["failed_normalize_csv"], normalize_failed_ref, row)
-                log_event(logfile_path, "Normalize failed for a row")
+                # write ORIGINAL CSV row to normalize-failed
+                write_failed_row(
+                    paths["failed_normalize_csv"],
+                    normalize_failed_ref,
+                    original_csv_row,
+                )
+                log_event(
+                    logfile_path,
+                    f"Normalize failed on row {row_index}: {exc}",
+                )
                 continue
 
             # Valid normalized row
@@ -234,7 +269,7 @@ def main() -> None:
             temp_output_writer = ensure_writer(
                 paths["temp_normalized_csv"],
                 temp_normalized_ref,
-                list(normalized_row.keys()),
+                NORMALIZED_FIELDNAMES,
             )
             temp_output_writer.writerow(normalized_row)
 
