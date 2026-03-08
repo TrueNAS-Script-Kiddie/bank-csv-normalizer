@@ -29,18 +29,18 @@ import engine.core.completion as completion
 NORMALIZED_FIELDNAMES = [
     "external_id",                 # 1
     "primary_transaction_date",    # 2
-    "booking_date",                # 3
-    "amount",                      # 4
-    "account_currency_code",       # 5
-    "asset_account_iban",          # 6
-    "asset_account_bic",           # 7
-    "asset_account_name",          # 8
-    "opposing_account_iban",       # 9
-    "opposing_account_bic",        # 10
-    "opposing_account_name",       # 11
-    "description",                 # 12
-    "notes",                       # 13
-    "debug_details_rest",          # 14
+    "transaction_processing_date", # 3
+    "booking_date",                # 4
+    "payment_date",                # 5
+    "amount",                      # 6
+    "account_currency_code",       # 7
+    "asset_account_iban",          # 8
+    "asset_account_bic",           # 9
+    "opposing_account_iban",       # 10
+    "opposing_account_bic",        # 11
+    "opposing_account_name",       # 12
+    "description",                 # 13
+    "notes",                       # 14
 ]
 
 
