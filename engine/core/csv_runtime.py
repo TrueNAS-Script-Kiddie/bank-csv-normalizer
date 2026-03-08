@@ -34,6 +34,8 @@ def build_paths(
       once the bank is known.
     """
 
+    name_without_ext, _ = os.path.splitext(csv_filename)
+
     return {
         # Directories
         "incoming_dir": os.path.join(data_dir, "incoming"),
@@ -49,20 +51,20 @@ def build_paths(
         "duplicate_index_previous_csv": os.path.join(data_dir, "temp", "previous-duplicate-index.csv"),
 
         # Temporary normalized output
-        "temp_normalized_csv": os.path.join(data_dir, "temp", f"{run_timestamp}-{csv_filename}.tmp.csv"),
+        "temp_normalized_csv": os.path.join(data_dir, "temp", f"{run_timestamp}-{name_without_ext}.tmp.csv"),
 
         # Failed rows
-        "failed_normalize_csv": os.path.join(data_dir, "failed", f"{run_timestamp}-{csv_filename}-normalize-failed.csv"),
-        "failed_duplicate_csv": os.path.join(data_dir, "failed", f"{run_timestamp}-{csv_filename}-duplicate-failed.csv"),
+        "failed_normalize_csv": os.path.join(data_dir, "failed", f"{run_timestamp}-{name_without_ext}-normalize-failed.csv"),
+        "failed_duplicate_csv": os.path.join(data_dir, "failed", f"{run_timestamp}-{name_without_ext}-duplicate-failed.csv"),
 
         # Processed originals
-        "processed_failed_csv": os.path.join(data_dir, "processed", f"{run_timestamp}-{csv_filename}-failed.csv"),
-        "processed_partial_csv": os.path.join(data_dir, "processed", f"{run_timestamp}-{csv_filename}-partial.csv"),
-        "processed_success_csv": os.path.join(data_dir, "processed", f"{run_timestamp}-{csv_filename}.csv"),
+        "processed_failed_csv": os.path.join(data_dir, "processed", f"{run_timestamp}-{name_without_ext}-processed-failed.csv"),
+        "processed_partial_csv": os.path.join(data_dir, "processed", f"{run_timestamp}-{name_without_ext}-processed-partial.csv"),
+        "processed_success_csv": os.path.join(data_dir, "processed", f"{run_timestamp}-{name_without_ext}-processed.csv"),
 
         # Normalized output
-        "normalized_partial_csv": os.path.join(data_dir, "normalized", f"{run_timestamp}-{csv_filename}-partial.csv"),
-        "normalized_success_csv": os.path.join(data_dir, "normalized", f"{run_timestamp}-{csv_filename}.csv"),
+        "normalized_partial_csv": os.path.join(data_dir, "normalized", f"{run_timestamp}-{name_without_ext}-normalized-partial.csv"),
+        "normalized_success_csv": os.path.join(data_dir, "normalized", f"{run_timestamp}-{name_without_ext}-normalized.csv"),
     }
 
 
