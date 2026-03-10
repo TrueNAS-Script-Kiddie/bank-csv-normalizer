@@ -6,16 +6,20 @@ from typing import Dict, Any, Optional
 # Regex definitions
 # ----------------------------------------------------------------------
 
-RE_VALUE_DATE = re.compile(
+RE_BOOKING_DATE = re.compile(
     r"VALUTADATUM\s*:\s*(\d{2}/\d{2}/\d{4})$"
 )
 
-RE_BANK_REFERENCE = re.compile(
+RE_EXTERNAL_ID = re.compile(
     r"BANKREFERENTIE\s*:\s*([0-9]+)"
 )
 
-RE_PROCESSED_ON_DATE = re.compile(
+RE_TRANSACTION_PROCESSING_DATE = re.compile(
     r"UITGEVOERD OP\s+(\d{2}/\d{2}(?:/\d{4})?)$"
+)
+
+RE_DESCRIPTION = re.compile(
+    r"MEDEDELING\s*:\s*(.*)$"
 )
 
 RE_PAYMENT_DATE_TIME = re.compile(
@@ -104,22 +108,22 @@ def normalize_name(value: str) -> str:
 # ----------------------------------------------------------------------
 
 def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
-
     normalized: Dict[str, Any] = {
-        "amount": "",
-        "account_currency_code": "",
-        "asset_account_iban": "",
-        "asset_account_bic": "",
-        "booking_date": "",
-        "primary_transaction_date": "",
-        "transaction_processing_date": "",
-        "external_id": "",
-        "opposing_account_iban": "",
-        "opposing_account_bic": "",
-        "opposing_account_name": "",
-        "description": "",
-        "notes": "",
+        "external_id": "",                   # 1
+        "primary_transaction_date": "",      # 2
+        "transaction_processing_date": "",   # 3
+        "booking_date": "",                  # 4
+        "payment_date": "",                  # 5
+        "amount": "",                        # 6
+        "account_currency_code": "",         # 7
+        "asset_account_iban": "",            # 8
+        "opposing_account_iban": "",         # 9
+        "opposing_account_bic": "",          # 10
+        "opposing_account_name": "",         # 11
+        "description": "",                   # 12
+        "notes": "",                         # 13
     }
+
 
     # ------------------------------------------------------------------
     # A1–A8 — CSV context
@@ -131,9 +135,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         raise ValueError("Non-EUR account currency")
     normalized["account_currency_code"] = "EUR"
 
-    normalized["asset_account_iban"] = csv_row["account_iban"].replace(
-        " ", ""
-    ).upper()
+    normalized["asset_account_iban"] = csv_row["account_iban"].replace(" ", "").upper()
 
     execution_date = parse_ddmmyyyy(csv_row["execution_date"])
     normalized["primary_transaction_date"] = execution_date
@@ -148,16 +150,12 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     if is_iban(csv_counterparty):
         normalized["opposing_account_iban"] = normalize_iban(csv_counterparty)
 
-    normalized["opposing_account_name"] = csv_row.get(
-        "counterparty_name", ""
-    ).strip()
+    normalized["opposing_account_name"] = csv_row.get("counterparty_name", "").strip()
 
     message = csv_row.get("message", "").strip()
     structured_match = RE_STRUCTURED_REFERENCE.search(message)
     if structured_match:
-        normalized["notes"] = canonicalize_structured_reference(
-            structured_match.group(1)
-        )
+        normalized["notes"] = canonicalize_structured_reference(structured_match.group(1))
     else:
         normalized["description"] = message
 
@@ -167,34 +165,30 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
 
     details_rest = csv_row.get("details_raw", "")
 
-    # B1 — VALUE DATE
-    match = RE_VALUE_DATE.search(details_rest)
+    # B1 — Details - VALUTADATUM / booking_date
+    match = RE_BOOKING_DATE.search(details_rest)
     if not match:
-        raise ValueError("Missing value date in details")
+        raise ValueError("Missing VALUTADATUM in details")
 
-    if parse_ddmmyyyy(match.group(1)) != booking_date:
-        details_value_date_raw = match.group(1)
-        details_value_date = parse_ddmmyyyy(details_value_date_raw)
-
+    details_booking_date = parse_ddmmyyyy(match.group(1))
+    if details_booking_date != normalized["booking_date"]:
         raise ValueError(
             "Value date mismatch between CSV and details: "
-            f"csv_value_date='{booking_date}' "
-            f"details_value_date_raw='{details_value_date_raw}' "
-            f"details_value_date='{details_value_date}'"
+            f"csv_value_date='{normalized['booking_date']}' details_value_date='{details_booking_date}'"
         )
 
     details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B2 — BANK REFERENCE
-    match = RE_BANK_REFERENCE.search(details_rest)
+    # B2 — Details - BANKREFERENTIE / external_id
+    match = RE_EXTERNAL_ID.search(details_rest)
     if not match:
-        raise ValueError("Missing bank reference")
+        raise ValueError("Missing BANKREFERENTIE in details")
 
     normalized["external_id"] = match.group(1)
     details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B3 — PROCESSED ON DATE
-    match = RE_PROCESSED_ON_DATE.search(details_rest)
+    # B3 — Details - UITGEVOERD OP / transaction_processing_date
+    match = RE_TRANSACTION_PROCESSING_DATE.search(details_rest)
     if match:
         normalized["transaction_processing_date"] = parse_ddmmyyyy(
             match.group(1),
@@ -202,7 +196,19 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         )
         details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B4 — PAYMENT DATETIME (aankoopmoment; altijd datetime)
+    # B4 — Details - MEDEDELING / description
+    match = RE_DESCRIPTION.search(details_rest)
+    if match:
+        details_mededeling = match.group(1).strip()
+
+        # lossless: if CSV already had a description, then save it in notes
+        if normalized["description"] and normalized["description"] != details_mededeling:
+            normalized["notes"] += f" | CSV description: {normalized['description']}"
+
+        normalized["description"] = details_mededeling
+        details_rest = details_rest.replace(match.group(0), "").strip()
+
+    # B5 — Details / payment_date
     match = RE_PAYMENT_DATE_TIME.search(details_rest)
     if match:
         payment_date = parse_ddmmyyyy(
@@ -210,12 +216,10 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
             fallback_year=execution_date[:4],
         )
         payment_time = match.group(2) or "00:00"
-
         normalized["payment_date"] = f"{payment_date} {payment_time}"
-
         details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B8 — DETAILS-TYPE / SUBTYPE (notes)
+    # B6 — Details / notes - Card Network
     match = RE_CARD_NETWORK.search(details_rest)
     if match:
         normalized["notes"] += f" | {match.group(1)}"
@@ -223,46 +227,46 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
             normalized["notes"] += f" ({match.group(2)})"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
+    # B7 — Details / notes - Card Number Container
     match = RE_CARD_NUMBER_CONTAINER.search(details_rest)
     if match:
         normalized["notes"] += f" | Card {match.group(2).strip()}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
+    # B8 — Details / notes - Channel
     match = RE_CHANNEL.search(details_rest)
     if match:
         normalized["notes"] += f" | {match.group(1)}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B9 — DETAILS-IBAN / BIC (atomic extraction)
+    # # B9 — Details / notes - DETAILS-TYPE / SUBTYPE
+    # match = RE_DETAILS_TYPE_SUBTYPE.search(details_rest)
+    # if match:
+    #     normalized["notes"] += f" | {match.group(1).strip()}"
+    #     if match.group(2):
+    #         normalized["notes"] += f" ({match.group(2).strip()})"
+    #     details_rest = details_rest.replace(match.group(0), "").strip()
+
+    # B10 — Details - IBAN BIC / opposing_account_iban ; opposing_account_bic
     match = RE_IBAN_BIC.search(details_rest)
     if match:
-        iban_raw = match.group(1)
+        iban_norm = normalize_iban(match.group(1))
         bic_raw = match.group(2)
 
-        iban_norm = normalize_iban(iban_raw)
-
         if not is_iban(iban_norm):
-            raise ValueError(
-                f"Invalid IBAN before BIC: raw='{iban_raw}' norm='{iban_norm}'"
-            )
+            raise ValueError(f"Invalid IBAN in details: '{match.group(1)}' -> '{iban_norm}'")
 
-        if (
-            normalized["opposing_account_iban"]
-            and iban_norm != normalized["opposing_account_iban"]
-        ):
+        if normalized["opposing_account_iban"] and iban_norm != normalized["opposing_account_iban"]:
             raise ValueError(
                 "IBAN mismatch between CSV and details: "
-                f"csv_iban='{normalized['opposing_account_iban']}' "
-                f"details_iban='{iban_norm}'"
+                f"csv_iban='{normalized['opposing_account_iban']}' details_iban='{iban_norm}'"
             )
 
         normalized["opposing_account_iban"] = iban_norm
         normalized["opposing_account_bic"] = bic_raw
-
-        # pas nu destructief verwijderen
         details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B10 — MERCHANT / TEGENPARTIJ (rest na knippen)
+    # B11 — Details / opposing_account_name
     address_part = ""
     match = RE_ADDRESS.search(details_rest)
     if match:
@@ -282,10 +286,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
             elif n_det in n_csv:
                 final_name = csv_name
             else:
-                raise ValueError(
-                    f"Ambiguous counterparty name: "
-                    f"'{csv_name}' vs '{details_name}'"
-                )
+                raise ValueError(f"Ambiguous counterparty name: '{csv_name}' vs '{details_name}'")
         else:
             final_name = details_name
     else:
@@ -295,10 +296,12 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         final_name = f"{final_name} {address_part}".strip()
 
     normalized["opposing_account_name"] = final_name
+
+    # consume rest (B11 is "rest na knippen")
     details_rest = ""
 
     # ------------------------------------------------------------------
-    # REST CHECK
+    # REST CHECK (FASE C)
     # ------------------------------------------------------------------
     if details_rest:
         raise ValueError(f"Unprocessed details content: {details_rest}")

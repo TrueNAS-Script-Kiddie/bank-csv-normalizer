@@ -35,12 +35,11 @@ NORMALIZED_FIELDNAMES = [
     "amount",                      # 6
     "account_currency_code",       # 7
     "asset_account_iban",          # 8
-    "asset_account_bic",           # 9
-    "opposing_account_iban",       # 10
-    "opposing_account_bic",        # 11
-    "opposing_account_name",       # 12
-    "description",                 # 13
-    "notes",                       # 14
+    "opposing_account_iban",       # 9
+    "opposing_account_bic",        # 10
+    "opposing_account_name",       # 11
+    "description",                 # 12
+    "notes",                       # 13
 ]
 
 
