@@ -22,6 +22,11 @@ RE_DESCRIPTION = re.compile(
     r"MEDEDELING\s*:\s*(.*)$"
 )
 
+RE_NO_DESCRIPTION = re.compile(
+    r"\bZONDER\s+MEDEDELING\b$"
+)
+
+
 RE_PAYMENT_DATE_TIME = re.compile(
     r"(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}))?"
 )
@@ -36,7 +41,7 @@ RE_CARD_NUMBER_CONTAINER = re.compile(
     r"OP DE REKENING GEKOPPELD AAN DE DEBETKAART NUMMER)\s+([0-9X ]+)"
 )
 
-RE_CHANNEL = re.compile(
+RE_PAYMENT_CHANNEL = re.compile(
     r"(VIA MOBILE BANKING|VIA WEB BANKING|P2P MOBILE|MOBIELE BETALING)"
 )
 
@@ -56,6 +61,35 @@ RE_IBAN_BIC = re.compile(
     r"\b([A-Z]{2}\s*\d{2}(?:\s*[A-Z0-9]){10,30})\s+BIC\s+([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b"
 )
 
+RE_TRANSACTION_TYPE = re.compile(
+    r"\b("
+    r"UW\s+DOORLOPENDE\s+OPDRACHT\s+TEN\s+GUNSTE\s+VAN\s+REKENING|"
+    r"WERO\s+OVERSCHRIJVING\s+IN\s+EURO|"
+    r"INSTANTOVERSCHRIJVING\s+IN\s+EURO|"
+    r"OVERSCHRIJVING\s+IN\s+EURO(?:\s+OP\s+REKENING|\s+VAN\s+REKENING)?|"
+    r"EUROPESE\s+DOMICILIERING|"
+    r"STORTING\s+VAN\s+[A-Z0-9 ,.\-]+|"
+    r"TERUGBETALING\s+WOONKREDIET(?:\s+[0-9\-]+)?"
+    r")\b"
+)
+
+RE_TRANSACTION_DIRECTION = re.compile(
+    r"\b("
+    r"OVERSCHRIJVING\s+IN\s+EURO\s+OP\s+REKENING|"
+    r"OVERSCHRIJVING\s+IN\s+EURO\s+VAN\s+REKENING|"
+    r"STORTING\s+VAN|"
+    r"TERUGBETALING\s+WOONKREDIET"
+    r")\b"
+)
+
+RE_TECHNICAL_REFERENCE = re.compile(
+    r"\b("
+    r"UW\s+REFERTE\s*:\s*[A-Z0-9\-]+|"
+    r"REFERTE\s+OPDRACHTGEVER\s*:\s*[A-Z0-9\-]+|"
+    r"REFERTE\s*:\s*[A-Z0-9\-]+"
+    r")\b"
+)
+
 RE_ADDRESS = re.compile(
     r"\b\d{4}\s+[A-Z][A-Z\s\-]+(?:\s+[A-Z]{2,})?\b"
 )
@@ -64,6 +98,9 @@ RE_STRUCTURED_REFERENCE = re.compile(
     r"(\+{0,3}\s*\d{3}\s*/\s*\d{4}\s*/\s*\d{5}\s*\+{0,3})"
 )
 
+RE_MANDATE_REFERENCE = re.compile(
+    r"\bMANDAAT\s+NUMMER\s*:\s*([A-Z0-9]+)\b"
+)
 
 # ----------------------------------------------------------------------
 # Helpers
@@ -145,6 +182,8 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
 
     if not csv_row["transaction_type"]:
         raise ValueError("Missing transaction type")
+    else:
+        normalized["notes"] += f" | TRANSACTION TYPE (CSV): {csv_row['transaction_type']}"
 
     csv_counterparty = csv_row.get("counterparty", "")
     if is_iban(csv_counterparty):
@@ -208,6 +247,13 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         normalized["description"] = details_mededeling
         details_rest = details_rest.replace(match.group(0), "").strip()
 
+    # B4a — Details - No message indicator
+    match = RE_NO_DESCRIPTION.search(details_rest)
+    if match:
+        if normalized["description"]:
+            raise ValueError("ZONDER MEDEDELING present but MEDEDELING already extracted")
+        details_rest = details_rest.replace(match.group(0), "").strip()
+
     # B5 — Details / payment_date
     match = RE_PAYMENT_DATE_TIME.search(details_rest)
     if match:
@@ -230,22 +276,42 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     # B7 — Details / notes - Card Number Container
     match = RE_CARD_NUMBER_CONTAINER.search(details_rest)
     if match:
-        normalized["notes"] += f" | Card {match.group(2).strip()}"
+        normalized["notes"] += f" | {match.group(0).strip()}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B8 — Details / notes - Channel
-    match = RE_CHANNEL.search(details_rest)
+    # B8 — Details / notes - Payment Channel
+    match = RE_PAYMENT_CHANNEL.search(details_rest)
     if match:
         normalized["notes"] += f" | {match.group(1)}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # # B9 — Details / notes - DETAILS-TYPE / SUBTYPE
-    # match = RE_DETAILS_TYPE_SUBTYPE.search(details_rest)
-    # if match:
-    #     normalized["notes"] += f" | {match.group(1).strip()}"
-    #     if match.group(2):
-    #         normalized["notes"] += f" ({match.group(2).strip()})"
-    #     details_rest = details_rest.replace(match.group(0), "").strip()
+    # B9 — Details / notes - Transaction description
+    match = RE_TRANSACTION_TYPE.search(details_rest)
+    if match:
+        transaction_description = match.group(1).strip()
+        normalized["notes"] += f" | Transaction description: {transaction_description}"
+        details_rest = details_rest.replace(match.group(0), "").strip()
+
+    # B9a — Details / notes - Transaction direction
+    match = RE_TRANSACTION_DIRECTION.search(details_rest)
+    if match:
+        transaction_direction = match.group(1).strip()
+        normalized["notes"] += f" | TRANSACTION DIRECTION: {transaction_direction}"
+        details_rest = details_rest.replace(match.group(0), "").strip()
+
+    # B9b — Details / notes - Technical references
+    match = RE_TECHNICAL_REFERENCE.search(details_rest)
+    if match:
+        technical_reference = match.group(1).strip()
+        normalized["notes"] += f" | TECHNICAL REFERENCE: {technical_reference}"
+        details_rest = details_rest.replace(match.group(0), "").strip()
+
+    # B9c — Details / notes - Mandate reference
+    match = RE_MANDATE_REFERENCE.search(details_rest)
+    if match:
+        mandate_reference = match.group(1).strip()
+        normalized["notes"] += f" | MANDATE REFERENCE: {mandate_reference}"
+        details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B10 — Details - IBAN BIC / opposing_account_iban ; opposing_account_bic
     match = RE_IBAN_BIC.search(details_rest)
