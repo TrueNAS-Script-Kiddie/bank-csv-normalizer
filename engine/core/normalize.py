@@ -62,19 +62,20 @@ RE_IBAN_BIC = re.compile(
 )
 
 RE_TRANSACTION_TYPE = re.compile(
-    r"\b("
+    r"\b(?:"
+    r"(STORTING)(?:\s+VAN\s+(.+))?"  # (1)=type, (2)=van_tail
+    r"|"
+    r"(MAANDELIJKSE\s+BIJDRAGE)(?:\s+(.+))?"  # (3)=type, (4)=free_tail
+    r"|"
+    r"("
     r"UW\s+DOORLOPENDE\s+OPDRACHT\s+TEN\s+GUNSTE\s+VAN\s+REKENING|"
     r"WERO\s+OVERSCHRIJVING\s+IN\s+EURO|"
     r"INSTANTOVERSCHRIJVING\s+IN\s+EURO|"
     r"OVERSCHRIJVING\s+IN\s+EURO(?:\s+OP\s+REKENING|\s+VAN\s+REKENING)?|"
     r"EUROPESE\s+DOMICILIERING|"
-    r"STORTING|"
-    r"TERUGBETALING\s+WOONKREDIET(?:\s+[0-9\-]+)?|"
-    r"MAANDELIJKSE\s+BIJDRAGE"
-    r")"
-    r"(?:\s+VAN\s+(.+))?"                 # group(2): only meaningful for STORTING
-    r"(?:\s+(.+))?"                       # group(3): only meaningful for MAANDELIJKSE BIJDRAGE (enforced in code)
-    r"\b",
+    r"TERUGBETALING\s+WOONKREDIET(?:\s+[0-9\-]+)?"
+    r")"  # (5)=type
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -220,18 +221,13 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     if not csv_row["transaction_type"]:
         raise ValueError("Missing transaction type")
 
-    # Suppress redundant 'Kaartbetaling' when card details exist
-    if not (
-        csv_row["transaction_type"].strip().upper() == "KAARTBETALING"
-        and RE_CARD_NUMBER_CONTAINER.search(details_rest)
-    ):
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "A5",
-            "TRANSACTION TYPE",
-            "transaction_type",
-            csv_row["transaction_type"],
-        )
+    normalized["notes"] = append_note_line(
+        normalized["notes"],
+        "A5",
+        "TRANSACTION TYPE",
+        "transaction_type",
+        csv_row["transaction_type"],
+    )
 
     # A6 — CSV / opposing_account_iban (if present)
     csv_counterparty = csv_row.get("counterparty", "")
@@ -390,9 +386,9 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     # B9 — Details / notes - Transaction description
     match = RE_TRANSACTION_TYPE.search(details_rest)
     if match:
-        tx_type = match.group(1).strip()
+        tx_type = (match.group(1) or match.group(3) or match.group(5)).strip()
         van_tail = match.group(2).strip() if match.group(2) else None
-        free_tail = match.group(3).strip() if match.group(3) else None
+        free_tail = match.group(4).strip() if match.group(4) else None
 
         normalized["notes"] = append_note_line(
             normalized["notes"],
