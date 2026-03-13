@@ -221,13 +221,18 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     if not csv_row["transaction_type"]:
         raise ValueError("Missing transaction type")
 
-    normalized["notes"] = append_note_line(
-        normalized["notes"],
-        "A5",
-        "TRANSACTION TYPE",
-        "transaction_type",
-        csv_row["transaction_type"],
-    )
+    # Suppress 'Kaartbetaling' when card details are present in details
+    if not (
+        csv_row["transaction_type"].strip().upper() == "KAARTBETALING"
+        and RE_CARD_NUMBER_CONTAINER.search(csv_row.get("details_raw", ""))
+    ):
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "A5",
+            "TRANSACTION TYPE",
+            "transaction_type",
+            csv_row["transaction_type"],
+        )
 
     # A6 — CSV / opposing_account_iban (if present)
     csv_counterparty = csv_row.get("counterparty", "")
@@ -250,6 +255,9 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     # ------------------------------------------------------------------
     # DETAILS COLUMN
     # ------------------------------------------------------------------
+
+    card_network = None
+    payment_channel = None
 
     details_rest = csv_row.get("details_raw", "")
 
@@ -343,43 +351,39 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         normalized["payment_date"] = f"{payment_date} {payment_time}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B6 — Details / notes - Card Network
+    # B6 — Details - Card Network (capture only)
     match = RE_CARD_NETWORK.search(details_rest)
     if match:
-        value = match.group(1)
+        card_network = match.group(1)
         if match.group(2):
-            value += f" ({match.group(2)})"
-
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "B6",
-            "CARD NETWORK",
-            "details",
-            value,
-        )
+            card_network += f" ({match.group(2)})"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B7 — Details / notes - Card Number Container
+    # B8 — Details - Payment Channel (capture only)
+    match = RE_PAYMENT_CHANNEL.search(details_rest)
+    if match:
+        payment_channel = match.group(1)
+        details_rest = details_rest.replace(match.group(0), "").strip()
+
+    # B7 — Details / notes - Card Identifier (with context)
     match = RE_CARD_NUMBER_CONTAINER.search(details_rest)
     if match:
+        prefix = []
+        if card_network:
+            prefix.append(card_network)
+        if payment_channel:
+            prefix.append(payment_channel)
+
+        full_value = match.group(0).strip()
+        if prefix:
+            full_value = f"{' '.join(prefix)} {full_value}"
+
         normalized["notes"] = append_note_line(
             normalized["notes"],
             "B7",
             "CARD IDENTIFIER",
             "details",
-            match.group(0).strip(),
-        )
-        details_rest = details_rest.replace(match.group(0), "").strip()
-
-    # B8 — Details / notes - Payment Channel
-    match = RE_PAYMENT_CHANNEL.search(details_rest)
-    if match:
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "B8",
-            "PAYMENT CHANNEL",
-            "details",
-            match.group(1),
+            full_value,
         )
         details_rest = details_rest.replace(match.group(0), "").strip()
 
@@ -408,17 +412,9 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         else:
             details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B9a — Details / notes - Transaction direction
+    # B9a — Details - Transaction direction (consume only, no note)
     match = RE_TRANSACTION_DIRECTION.search(details_rest)
     if match:
-        transaction_direction = match.group(1).strip()
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "B9a",
-            "TRANSACTION DIRECTION",
-            "details",
-            transaction_direction,
-        )
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B9b — Details / notes - Technical references
