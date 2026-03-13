@@ -68,17 +68,20 @@ RE_TRANSACTION_TYPE = re.compile(
     r"INSTANTOVERSCHRIJVING\s+IN\s+EURO|"
     r"OVERSCHRIJVING\s+IN\s+EURO(?:\s+OP\s+REKENING|\s+VAN\s+REKENING)?|"
     r"EUROPESE\s+DOMICILIERING|"
-    r"STORTING\s+VAN\s+[A-Z0-9 ,.\-]+|"
-    r"TERUGBETALING\s+WOONKREDIET(?:\s+[0-9\-]+)?"
-    r")\b"
+    r"STORTING|"
+    r"TERUGBETALING\s+WOONKREDIET(?:\s+[0-9\-]+)?|"
+    r"MAANDELIJKSE\s+BIJDRAGE"
+    r")"
+    r"(?:\s+VAN\s+(.+))?"                 # group(2): only meaningful for STORTING
+    r"(?:\s+(.+))?"                       # group(3): only meaningful for MAANDELIJKSE BIJDRAGE (enforced in code)
+    r"\b",
+    re.IGNORECASE,
 )
 
 RE_TRANSACTION_DIRECTION = re.compile(
     r"\b("
     r"OVERSCHRIJVING\s+IN\s+EURO\s+OP\s+REKENING|"
     r"OVERSCHRIJVING\s+IN\s+EURO\s+VAN\s+REKENING|"
-    r"STORTING\s+VAN|"
-    r"TERUGBETALING\s+WOONKREDIET|"
     r"OPDRACHTGEVER\s+REKENING\s*:"
     r")",
     re.IGNORECASE,
@@ -217,13 +220,18 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     if not csv_row["transaction_type"]:
         raise ValueError("Missing transaction type")
 
-    normalized["notes"] = append_note_line(
-        normalized["notes"],
-        "A5",
-        "TRANSACTION TYPE",
-        "transaction_type",
-        csv_row["transaction_type"],
-    )
+    # Suppress redundant 'Kaartbetaling' when card details exist
+    if not (
+        csv_row["transaction_type"].strip().upper() == "KAARTBETALING"
+        and RE_CARD_NUMBER_CONTAINER.search(details_rest)
+    ):
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "A5",
+            "TRANSACTION TYPE",
+            "transaction_type",
+            csv_row["transaction_type"],
+        )
 
     # A6 — CSV / opposing_account_iban (if present)
     csv_counterparty = csv_row.get("counterparty", "")
@@ -382,15 +390,27 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     # B9 — Details / notes - Transaction description
     match = RE_TRANSACTION_TYPE.search(details_rest)
     if match:
-        transaction_description = match.group(1).strip()
+        tx_type = match.group(1).strip()
+        van_tail = match.group(2).strip() if match.group(2) else None
+        free_tail = match.group(3).strip() if match.group(3) else None
+
         normalized["notes"] = append_note_line(
             normalized["notes"],
             "B9",
             "TRANSACTION TYPE",
             "details",
-            transaction_description,
+            tx_type,
         )
-        details_rest = details_rest.replace(match.group(0), "").strip()
+
+        if tx_type.upper() == "STORTING" and van_tail:
+            details_rest = van_tail
+
+        elif tx_type.upper() == "MAANDELIJKSE BIJDRAGE" and free_tail:
+            normalized["description"] = free_tail
+            details_rest = ""
+
+        else:
+            details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B9a — Details / notes - Transaction direction
     match = RE_TRANSACTION_DIRECTION.search(details_rest)
