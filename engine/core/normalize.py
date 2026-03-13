@@ -78,16 +78,19 @@ RE_TRANSACTION_DIRECTION = re.compile(
     r"OVERSCHRIJVING\s+IN\s+EURO\s+OP\s+REKENING|"
     r"OVERSCHRIJVING\s+IN\s+EURO\s+VAN\s+REKENING|"
     r"STORTING\s+VAN|"
-    r"TERUGBETALING\s+WOONKREDIET"
-    r")\b"
+    r"TERUGBETALING\s+WOONKREDIET|"
+    r"OPDRACHTGEVER\s+REKENING\s*:"
+    r")",
+    re.IGNORECASE,
 )
 
 RE_TECHNICAL_REFERENCE = re.compile(
     r"\b("
-    r"UW\s+REFERTE\s*:\s*[A-Z0-9\-]+|"
-    r"REFERTE\s+OPDRACHTGEVER\s*:\s*[A-Z0-9\-]+|"
-    r"REFERTE\s*:\s*[A-Z0-9\-]+"
-    r")\b"
+    r"UW\s+REFERTE\s*:\s*.+?|"
+    r"REFERTE\s+OPDRACHTGEVER\s*:\s*.+?|"
+    r"REFERTE\s*:\s*.+?"
+    r")(?=\s+(?:MANDAAT\s+NUMMER)\s*:|$)",
+    re.IGNORECASE,
 )
 
 RE_ADDRESS = re.compile(
@@ -158,6 +161,13 @@ def extract_structured_message(value: str) -> Optional[str]:
 def normalize_for_message_compare(value: str) -> str:
     return re.sub(r"\s+", "", value).upper()
 
+def append_note_line(notes: str, step: str, role: str, source: str, value: str) -> str:
+    line = f"{step}) {role} ({source}): {value}"
+    return f"{notes}\n{line}" if notes else line
+
+def normalize_for_name_compare(value: str) -> str:
+    return re.sub(r"\s+", "", value).upper()
+
 
 # ----------------------------------------------------------------------
 # Main normalize function
@@ -182,35 +192,48 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
 
 
     # ------------------------------------------------------------------
-    # A1–A8 — CSV context
+    # NON-DETAILS COLUMNS
     # ------------------------------------------------------------------
 
+    # A1 — CSV / amount + currency
     normalized["amount"] = csv_row["amount"].replace(",", ".").strip()
 
     if csv_row["currency"] != "EUR":
         raise ValueError("Non-EUR account currency")
     normalized["account_currency_code"] = "EUR"
 
+    # A2 — CSV / asset_account_iban
     normalized["asset_account_iban"] = csv_row["account_iban"].replace(" ", "").upper()
 
+    # A3 — CSV / primary_transaction_date (execution_date)
     execution_date = parse_ddmmyyyy(csv_row["execution_date"])
     normalized["primary_transaction_date"] = execution_date
 
+    # A4 — CSV / booking_date (value_date)
     booking_date = parse_ddmmyyyy(csv_row["value_date"])
     normalized["booking_date"] = booking_date
 
+    # A5 — CSV / transaction_type
     if not csv_row["transaction_type"]:
         raise ValueError("Missing transaction type")
-    else:
-        normalized["notes"] += f"\nTRANSACTION TYPE (CSV): {csv_row['transaction_type']}"
 
+    normalized["notes"] = append_note_line(
+        normalized["notes"],
+        "A5",
+        "TRANSACTION TYPE",
+        "transaction_type",
+        csv_row["transaction_type"],
+    )
 
+    # A6 — CSV / opposing_account_iban (if present)
     csv_counterparty = csv_row.get("counterparty", "")
     if is_iban(csv_counterparty):
         normalized["opposing_account_iban"] = normalize_iban(csv_counterparty)
 
+    # A7 — CSV / opposing_account_name
     normalized["opposing_account_name"] = csv_row.get("counterparty_name", "").strip()
 
+    # A8 — CSV / description (message)
     message = csv_row.get("message", "").strip()
 
     csv_structured = extract_structured_message(message)
@@ -219,8 +242,9 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     else:
         normalized["description"] = message
 
+
     # ------------------------------------------------------------------
-    # DETAILS PIPELINE
+    # DETAILS COLUMN
     # ------------------------------------------------------------------
 
     details_rest = csv_row.get("details_raw", "")
@@ -318,49 +342,93 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     # B6 — Details / notes - Card Network
     match = RE_CARD_NETWORK.search(details_rest)
     if match:
-        normalized["notes"] += f"\n{match.group(1)}"
+        value = match.group(1)
         if match.group(2):
-            normalized["notes"] += f" ({match.group(2)})"
+            value += f" ({match.group(2)})"
+
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "B6",
+            "CARD NETWORK",
+            "details",
+            value,
+        )
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B7 — Details / notes - Card Number Container
     match = RE_CARD_NUMBER_CONTAINER.search(details_rest)
     if match:
-        normalized["notes"] += f"\n{match.group(0).strip()}"
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "B7",
+            "CARD IDENTIFIER",
+            "details",
+            match.group(0).strip(),
+        )
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B8 — Details / notes - Payment Channel
     match = RE_PAYMENT_CHANNEL.search(details_rest)
     if match:
-        normalized["notes"] += f"\n{match.group(1)}"
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "B8",
+            "PAYMENT CHANNEL",
+            "details",
+            match.group(1),
+        )
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B9 — Details / notes - Transaction description
     match = RE_TRANSACTION_TYPE.search(details_rest)
     if match:
         transaction_description = match.group(1).strip()
-        normalized["notes"] += f"\nTRANSACTION TYPE (DETAILS): {transaction_description}"
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "B9",
+            "TRANSACTION TYPE",
+            "details",
+            transaction_description,
+        )
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B9a — Details / notes - Transaction direction
     match = RE_TRANSACTION_DIRECTION.search(details_rest)
     if match:
         transaction_direction = match.group(1).strip()
-        normalized["notes"] += f"\nTRANSACTION DIRECTION: {transaction_direction}"
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "B9a",
+            "TRANSACTION DIRECTION",
+            "details",
+            transaction_direction,
+        )
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B9b — Details / notes - Technical references
     match = RE_TECHNICAL_REFERENCE.search(details_rest)
     if match:
         technical_reference = match.group(1).strip()
-        normalized["notes"] += f"\nTECHNICAL REFERENCE: {technical_reference}"
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "B9b",
+            "TECHNICAL REFERENCE",
+            "details",
+            technical_reference,
+        )
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B9c — Details / notes - Mandate reference
     match = RE_MANDATE_REFERENCE.search(details_rest)
     if match:
         mandate_reference = match.group(1).strip()
-        normalized["notes"] += f"\nMANDATE REFERENCE: {mandate_reference}"
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "B9c",
+            "MANDATE REFERENCE",
+            "details",
+            mandate_reference,
+        )
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B10 — Details - IBAN BIC / opposing_account_iban ; opposing_account_bic
@@ -383,37 +451,51 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B11 — Details / opposing_account_name
-    address_part = ""
-    match = RE_ADDRESS.search(details_rest)
-    if match:
-        address_part = match.group(0).strip()
-        details_rest = details_rest.replace(match.group(0), "").strip()
-
     details_name = details_rest.strip()
-    csv_name = normalized["opposing_account_name"]
+    csv_name = (normalized["opposing_account_name"] or "").strip()
 
-    if details_name:
-        if csv_name:
-            n_csv = normalize_name(csv_name)
-            n_det = normalize_name(details_name)
+    final_name = ""
 
-            if n_csv in n_det:
-                final_name = details_name
-            elif n_det in n_csv:
-                final_name = csv_name
+    if csv_name:
+        if details_name:
+            n_csv = normalize_for_name_compare(csv_name)
+            n_det = normalize_for_name_compare(details_name)
+
+            if n_csv not in n_det:
+                raise ValueError(
+                    f"Counterparty name mismatch: "
+                    f"csv='{csv_name}' details='{details_name}'"
+                )
+
+            # If details begins with the same name (ignoring caps/spaces), keep CSV casing + append the remaining tail (address etc.)
+            if n_det.startswith(n_csv):
+                # compute tail length in original string by using normalized lengths
+                tail_norm_len = len(n_det) - len(n_csv)
+                if tail_norm_len > 0:
+                    # rebuild tail by walking original details_name and consuming normalized chars
+                    consumed = 0
+                    cut_index = 0
+                    for i, ch in enumerate(details_name):
+                        if not ch.isspace():
+                            consumed += 1
+                        if consumed >= len(n_csv):
+                            cut_index = i + 1
+                            break
+                    tail = details_name[cut_index:].strip()
+                    final_name = f"{csv_name} {tail}".strip() if tail else csv_name
+                else:
+                    final_name = csv_name
             else:
-                raise ValueError(f"Ambiguous counterparty name: '{csv_name}' vs '{details_name}'")
+                # details has extra leading words ("VAN ...") → keep CSV only (no safe splice)
+                final_name = csv_name
         else:
-            final_name = details_name
+            final_name = csv_name
     else:
-        final_name = csv_name
-
-    if address_part:
-        final_name = f"{final_name} {address_part}".strip()
+        final_name = details_name
 
     normalized["opposing_account_name"] = final_name
 
-    # consume rest (B11 is "rest na knippen")
+    # consume rest
     details_rest = ""
 
     # ------------------------------------------------------------------
