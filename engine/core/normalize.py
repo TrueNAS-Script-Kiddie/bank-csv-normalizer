@@ -139,6 +139,25 @@ def canonicalize_structured_reference(raw: str) -> str:
 def normalize_name(value: str) -> str:
     return re.sub(r"\s+", " ", value.upper()).strip()
 
+def extract_structured_message(value: str) -> Optional[str]:
+    if not value:
+        return None
+
+    value = value.strip()
+
+    # already formatted
+    if re.fullmatch(r"\+{3}\d{3}/\d{4}/\d{5}\+{3}", value):
+        return value
+
+    # raw 12 digits
+    if re.fullmatch(r"\d{12}", value):
+        return canonicalize_structured_reference(value)
+
+    return None
+
+def normalize_for_message_compare(value: str) -> str:
+    return re.sub(r"\s+", "", value).upper()
+
 
 # ----------------------------------------------------------------------
 # Main normalize function
@@ -183,7 +202,8 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     if not csv_row["transaction_type"]:
         raise ValueError("Missing transaction type")
     else:
-        normalized["notes"] += f" | TRANSACTION TYPE (CSV): {csv_row['transaction_type']}"
+        normalized["notes"] += f"\nTRANSACTION TYPE (CSV): {csv_row['transaction_type']}"
+
 
     csv_counterparty = csv_row.get("counterparty", "")
     if is_iban(csv_counterparty):
@@ -192,9 +212,10 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     normalized["opposing_account_name"] = csv_row.get("counterparty_name", "").strip()
 
     message = csv_row.get("message", "").strip()
-    structured_match = RE_STRUCTURED_REFERENCE.search(message)
-    if structured_match:
-        normalized["notes"] = canonicalize_structured_reference(structured_match.group(1))
+
+    csv_structured = extract_structured_message(message)
+    if csv_structured:
+        normalized["description"] = csv_structured
     else:
         normalized["description"] = message
 
@@ -240,11 +261,40 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     if match:
         details_mededeling = match.group(1).strip()
 
-        # lossless: if CSV already had a description, then save it in notes
-        if normalized["description"] and normalized["description"] != details_mededeling:
-            normalized["notes"] += f" | CSV description: {normalized['description']}"
+        csv_description = normalized["description"]
 
-        normalized["description"] = details_mededeling
+        csv_structured = extract_structured_message(csv_description)
+        details_structured = extract_structured_message(details_mededeling)
+
+        # --- Structured message handling (authoritative, single value) ---
+        if csv_structured or details_structured:
+            if csv_structured and details_structured:
+                if csv_structured != details_structured:
+                    raise ValueError(
+                        f"Structured message mismatch: "
+                        f"csv='{csv_structured}' details='{details_structured}'"
+                    )
+                normalized["description"] = csv_structured
+            elif csv_structured:
+                normalized["description"] = csv_structured
+            else:
+                normalized["description"] = details_structured
+
+        # --- Non-structured message handling (CSV wins, details validates) ---
+        else:
+            if csv_description:
+                n_csv = normalize_for_message_compare(csv_description)
+                n_det = normalize_for_message_compare(details_mededeling)
+
+                if n_csv != n_det:
+                    raise ValueError(
+                        f"Mededeling mismatch: "
+                        f"csv='{csv_description}' details='{details_mededeling}'"
+                    )
+                # CSV version is authoritative → keep it
+            else:
+                normalized["description"] = details_mededeling
+
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B4a — Details - No message indicator
@@ -268,7 +318,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     # B6 — Details / notes - Card Network
     match = RE_CARD_NETWORK.search(details_rest)
     if match:
-        normalized["notes"] += f" | {match.group(1)}"
+        normalized["notes"] += f"\n{match.group(1)}"
         if match.group(2):
             normalized["notes"] += f" ({match.group(2)})"
         details_rest = details_rest.replace(match.group(0), "").strip()
@@ -276,41 +326,41 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     # B7 — Details / notes - Card Number Container
     match = RE_CARD_NUMBER_CONTAINER.search(details_rest)
     if match:
-        normalized["notes"] += f" | {match.group(0).strip()}"
+        normalized["notes"] += f"\n{match.group(0).strip()}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B8 — Details / notes - Payment Channel
     match = RE_PAYMENT_CHANNEL.search(details_rest)
     if match:
-        normalized["notes"] += f" | {match.group(1)}"
+        normalized["notes"] += f"\n{match.group(1)}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B9 — Details / notes - Transaction description
     match = RE_TRANSACTION_TYPE.search(details_rest)
     if match:
         transaction_description = match.group(1).strip()
-        normalized["notes"] += f" | Transaction description: {transaction_description}"
+        normalized["notes"] += f"\nTRANSACTION TYPE (DETAILS): {transaction_description}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B9a — Details / notes - Transaction direction
     match = RE_TRANSACTION_DIRECTION.search(details_rest)
     if match:
         transaction_direction = match.group(1).strip()
-        normalized["notes"] += f" | TRANSACTION DIRECTION: {transaction_direction}"
+        normalized["notes"] += f"\nTRANSACTION DIRECTION: {transaction_direction}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B9b — Details / notes - Technical references
     match = RE_TECHNICAL_REFERENCE.search(details_rest)
     if match:
         technical_reference = match.group(1).strip()
-        normalized["notes"] += f" | TECHNICAL REFERENCE: {technical_reference}"
+        normalized["notes"] += f"\nTECHNICAL REFERENCE: {technical_reference}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B9c — Details / notes - Mandate reference
     match = RE_MANDATE_REFERENCE.search(details_rest)
     if match:
         mandate_reference = match.group(1).strip()
-        normalized["notes"] += f" | MANDATE REFERENCE: {mandate_reference}"
+        normalized["notes"] += f"\nMANDATE REFERENCE: {mandate_reference}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B10 — Details - IBAN BIC / opposing_account_iban ; opposing_account_bic
