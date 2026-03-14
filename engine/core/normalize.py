@@ -221,18 +221,13 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     if not csv_row["transaction_type"]:
         raise ValueError("Missing transaction type")
 
-    # Suppress 'Kaartbetaling' when card details are present in details
-    if not (
-        csv_row["transaction_type"].strip().upper() == "KAARTBETALING"
-        and RE_CARD_NUMBER_CONTAINER.search(csv_row.get("details_raw", ""))
-    ):
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "A5",
-            "TRANSACTION TYPE",
-            "transaction_type",
-            csv_row["transaction_type"],
-        )
+    normalized["notes"] = append_note_line(
+        normalized["notes"],
+        "A5",
+        "TRANSACTION TYPE",
+        "transaction_type",
+        csv_row["transaction_type"],
+    )
 
     # A6 — CSV / opposing_account_iban (if present)
     csv_counterparty = csv_row.get("counterparty", "")
@@ -351,7 +346,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         normalized["payment_date"] = f"{payment_date} {payment_time}"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B6 — Details - Card Network (capture only)
+    # B6 — Details - Card Network (capture)
     match = RE_CARD_NETWORK.search(details_rest)
     if match:
         card_network = match.group(1)
@@ -359,13 +354,13 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
             card_network += f" ({match.group(2)})"
         details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B8 — Details - Payment Channel (capture only)
+    # B8 — Details - Payment Channel (capture)
     match = RE_PAYMENT_CHANNEL.search(details_rest)
     if match:
         payment_channel = match.group(1)
         details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B7 — Details / notes - Card Identifier (with context)
+    # B7 — Details - Card Identifier
     match = RE_CARD_NUMBER_CONTAINER.search(details_rest)
     if match:
         prefix = []
@@ -374,18 +369,38 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         if payment_channel:
             prefix.append(payment_channel)
 
-        full_value = match.group(0).strip()
+        value = match.group(0).strip()
         if prefix:
-            full_value = f"{' '.join(prefix)} {full_value}"
+            value = f"{' '.join(prefix)} {value}"
 
         normalized["notes"] = append_note_line(
             normalized["notes"],
             "B7",
             "CARD IDENTIFIER",
             "details",
-            full_value,
+            value,
         )
+
         details_rest = details_rest.replace(match.group(0), "").strip()
+    else:
+
+        if card_network:
+            normalized["notes"] = append_note_line(
+                normalized["notes"],
+                "B6",
+                "CARD NETWORK",
+                "details",
+                card_network,
+            )
+
+        if payment_channel:
+            normalized["notes"] = append_note_line(
+                normalized["notes"],
+                "B8",
+                "PAYMENT CHANNEL",
+                "details",
+                payment_channel,
+            )
 
     # B9 — Details / notes - Transaction description
     match = RE_TRANSACTION_TYPE.search(details_rest)
@@ -394,13 +409,14 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         van_tail = match.group(2).strip() if match.group(2) else None
         free_tail = match.group(4).strip() if match.group(4) else None
 
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "B9",
-            "TRANSACTION TYPE",
-            "details",
-            tx_type,
-        )
+        if normalize_for_message_compare(tx_type) != normalize_for_message_compare(csv_row["transaction_type"]):
+            normalized["notes"] = append_note_line(
+                normalized["notes"],
+                "B9",
+                "TRANSACTION TYPE",
+                "details",
+                tx_type,
+            )
 
         if tx_type.upper() == "STORTING" and van_tail:
             details_rest = van_tail
