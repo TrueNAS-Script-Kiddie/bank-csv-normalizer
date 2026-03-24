@@ -1,0 +1,69 @@
+# Bank CSV Normalizer
+
+Automated pipeline that ingests bank-exported CSVs, validates and normalizes
+transaction data, deduplicates against a persistent index, and emits a unified
+output format. Designed to run unattended via cron or systemd timer.
+
+## Tech Stack
+
+- **Python 3.10+** — processing engine (`engine/`)
+- **Bash** — orchestration, lockfile, cron-safe entry point
+- **YAML** — per-bank configuration (`config/*.yaml`)
+- **stdlib only** — `csv`, `re`, `unicodedata`, `yaml`, `shutil`, `subprocess`
+
+## Key Directories
+
+| Path | Purpose |
+|------|---------|
+| `engine/core/` | Core pipeline modules (one concern each) |
+| `engine/process_csv.py` | Pipeline entry point; orchestrates all stages |
+| `config/` | Per-bank YAML configs + `app.env` (EMAIL_TO) |
+| `data/incoming/` | Drop CSVs here to trigger processing |
+| `data/normalized/` | Successful normalized output |
+| `data/processed/` | Originals after processing (success/partial/failed) |
+| `data/failed/` | Rows that failed normalization or dedup |
+| `data/duplicate-index/` | Persistent dedup index + timestamped backups |
+| `data/logs/` | Per-run timestamped logs |
+| `data/temp/` | Working files; cleaned up after each run |
+
+## Running
+
+```bash
+# Manual single run (processes all CSVs in data/incoming/)
+./bank-csv-normalizer.bash
+
+# Cron (every 5 min)
+*/5 * * * * /path/to/bank-csv-normalizer.bash
+
+# Direct Python invocation (for debugging)
+PYTHONPATH=. python3 -m engine.process_csv <csv_path> <YYYYMMDD-HHMMSS> <logfile_path>
+```
+
+No build step. No package install needed beyond Python stdlib + `pyyaml`.
+
+## Exit Codes
+
+Defined in [engine/process_csv.py:278-316](engine/process_csv.py#L278):
+
+| Code | Outcome |
+|------|---------|
+| `0` | success or all_full_duplicates |
+| `65` | structure_failed / all_failed |
+| `75` | partial (some rows failed) |
+| `92–97` | critical file operation errors |
+| `99` | unexpected exception |
+
+## Adding a New Bank
+
+1. Create `config/<bank>.yaml` — define required columns, regex rules, filter
+   values, and `duplicate_key` extraction. See [config/fintro.yaml](config/fintro.yaml) as reference.
+2. No code changes needed — `autodetect_bank()` loads all `config/*.yaml`
+   automatically ([engine/core/csv_runtime.py:174](engine/core/csv_runtime.py#L174)).
+3. If the bank has non-standard field parsing, extend `normalize_row()` in
+   [engine/core/normalize.py](engine/core/normalize.py).
+
+## Additional Documentation
+
+| File | When to check |
+|------|--------------|
+| [.claude/docs/architectural_patterns.md](.claude/docs/architectural_patterns.md) | Understanding design decisions, pipeline phases, normalization strategy, error handling conventions |
