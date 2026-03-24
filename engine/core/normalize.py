@@ -217,18 +217,6 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     booking_date = parse_ddmmyyyy(csv_row["value_date"])
     normalized["booking_date"] = booking_date
 
-    # A5 — CSV / transaction_type
-    if not csv_row["transaction_type"]:
-        raise ValueError("Missing transaction type")
-
-    normalized["notes"] = append_note_line(
-        normalized["notes"],
-        "A5",
-        "TRANSACTION TYPE",
-        "transaction_type",
-        csv_row["transaction_type"],
-    )
-
     # A6 — CSV / opposing_account_iban (if present)
     csv_counterparty = csv_row.get("counterparty", "")
     if is_iban(csv_counterparty):
@@ -253,6 +241,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
 
     card_network = None
     payment_channel = None
+    pending_b8_payment_channel = None
 
     details_rest = csv_row.get("details_raw", "")
 
@@ -383,7 +372,6 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
 
         details_rest = details_rest.replace(match.group(0), "").strip()
     else:
-
         if card_network:
             normalized["notes"] = append_note_line(
                 normalized["notes"],
@@ -393,14 +381,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
                 card_network,
             )
 
-        if payment_channel:
-            normalized["notes"] = append_note_line(
-                normalized["notes"],
-                "B8",
-                "PAYMENT CHANNEL",
-                "details",
-                payment_channel,
-            )
+        pending_b8_payment_channel = payment_channel
 
     # B9 — Details / notes - Transaction description
     match = RE_TRANSACTION_TYPE.search(details_rest)
@@ -409,7 +390,18 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         van_tail = match.group(2).strip() if match.group(2) else None
         free_tail = match.group(4).strip() if match.group(4) else None
 
-        if normalize_for_message_compare(tx_type) != normalize_for_message_compare(csv_row["transaction_type"]):
+        csv_tx = normalize_for_message_compare(csv_row.get("transaction_type", ""))
+        b9_tx  = normalize_for_message_compare(tx_type)
+
+        # Strip only explicitly allowed, semantically empty suffixes (normalized)
+        for suffix in ("VAN REKENING", "NAAR REKENING", "OP REKENING"):
+            sfx = normalize_for_message_compare(suffix)
+            if b9_tx.endswith(sfx):
+                b9_tx = b9_tx[: -len(sfx)].strip()
+                break
+
+        # Emit B9 only if it adds real semantic information
+        if b9_tx != csv_tx:
             normalized["notes"] = append_note_line(
                 normalized["notes"],
                 "B9",
@@ -418,6 +410,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
                 tx_type,
             )
 
+        # Special handling
         if tx_type.upper() == "STORTING" and van_tail:
             details_rest = van_tail
 
@@ -522,6 +515,43 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         final_name = details_name
 
     normalized["opposing_account_name"] = final_name
+
+    # A5 — CSV / transaction_type (final emit)
+    if not csv_row["transaction_type"]:
+        raise ValueError("Missing transaction type")
+
+    tx_type_norm = normalize_for_message_compare(csv_row["transaction_type"])
+    details_norm = normalize_for_message_compare(csv_row.get("details_raw", ""))
+
+    suppress_a5 = (tx_type_norm == "KAARTBETALING") and ("DEBETKAART" in details_norm)
+
+    append_channel_to_a5 = (
+        pending_b8_payment_channel
+        and pending_b8_payment_channel.upper().startswith("VIA")
+    )
+
+    if not suppress_a5:
+        a5_value = csv_row["transaction_type"]
+
+        if append_channel_to_a5:
+            a5_value = f"{a5_value} {pending_b8_payment_channel}"
+
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "A5",
+            "TRANSACTION TYPE",
+            "transaction_type",
+            a5_value,
+        )
+
+    if pending_b8_payment_channel and not append_channel_to_a5:
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "B8",
+            "PAYMENT CHANNEL",
+            "details",
+            pending_b8_payment_channel,
+        )
 
     # consume rest
     details_rest = ""
