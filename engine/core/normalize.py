@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from typing import Dict, Any, Optional
 
 
@@ -163,6 +164,8 @@ def extract_structured_message(value: str) -> Optional[str]:
     return None
 
 def normalize_for_message_compare(value: str) -> str:
+    value = unicodedata.normalize("NFD", value)
+    value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
     return re.sub(r"\s+", "", value).upper()
 
 def append_note_line(notes: str, step: str, role: str, source: str, value: str) -> str:
@@ -242,6 +245,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     card_network = None
     payment_channel = None
     pending_b8_payment_channel = None
+    pending_b9_tx_norm = None
 
     details_rest = csv_row.get("details_raw", "")
 
@@ -384,23 +388,28 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         pending_b8_payment_channel = payment_channel
 
     # B9 — Details / notes - Transaction description
+    pending_b9_tx_norm = None
+
     match = RE_TRANSACTION_TYPE.search(details_rest)
     if match:
         tx_type = (match.group(1) or match.group(3) or match.group(5)).strip()
         van_tail = match.group(2).strip() if match.group(2) else None
         free_tail = match.group(4).strip() if match.group(4) else None
 
-        csv_tx = normalize_for_message_compare(csv_row.get("transaction_type", ""))
+        csv_tx = normalize_for_message_compare(csv_row["transaction_type"])
         b9_tx  = normalize_for_message_compare(tx_type)
 
-        # Strip only explicitly allowed, semantically empty suffixes (normalized)
+        # Strip only explicitly allowed, semantically empty suffixes
         for suffix in ("VAN REKENING", "NAAR REKENING", "OP REKENING"):
             sfx = normalize_for_message_compare(suffix)
             if b9_tx.endswith(sfx):
-                b9_tx = b9_tx[: -len(sfx)].strip()
+                b9_tx = b9_tx[: -len(sfx)]
                 break
 
-        # Emit B9 only if it adds real semantic information
+        # Remember B9 for A5 decision
+        pending_b9_tx_norm = b9_tx
+
+        # Emit B9 only if it adds semantic information
         if b9_tx != csv_tx:
             normalized["notes"] = append_note_line(
                 normalized["notes"],
@@ -523,7 +532,16 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
     tx_type_norm = normalize_for_message_compare(csv_row["transaction_type"])
     details_norm = normalize_for_message_compare(csv_row.get("details_raw", ""))
 
-    suppress_a5 = (tx_type_norm == "KAARTBETALING") and ("DEBETKAART" in details_norm)
+    suppress_a5 = False
+
+    # Regel 1 — kaartbetaling + debetkaart → A5 weg
+    if tx_type_norm == "KAARTBETALING" and "DEBETKAART" in details_norm:
+        suppress_a5 = True
+
+    # Regel 2 — B9 is een specifiekere verfijning van A5 → A5 weg
+    if pending_b9_tx_norm:
+        if pending_b9_tx_norm != tx_type_norm and tx_type_norm in pending_b9_tx_norm:
+            suppress_a5 = True
 
     append_channel_to_a5 = (
         pending_b8_payment_channel
@@ -544,6 +562,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
             a5_value,
         )
 
+    # Emit B8 only if it was NOT merged into A5
     if pending_b8_payment_channel and not append_channel_to_a5:
         normalized["notes"] = append_note_line(
             normalized["notes"],
