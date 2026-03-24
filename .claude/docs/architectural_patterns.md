@@ -118,3 +118,11 @@ and provides a complete audit trail without a database.
 
 Format defined at [duplicate_index.py:25](../../engine/core/duplicate_index.py#L25); applied in
 [csv_runtime.py:54](../../engine/core/csv_runtime.py#L54) and [bank-csv-normalizer.bash:34](../../bank-csv-normalizer.bash#L34).
+
+## 11. Naming Conventions
+
+All code uses clear, explicit, and consistent English names.
+
+- Use descriptive names for variables, functions, modules, and files.
+- Apply consistent naming patterns for related values (e.g., shared prefixes for CSV-derived fields).
+- Names must reflect meaning and purpose.
