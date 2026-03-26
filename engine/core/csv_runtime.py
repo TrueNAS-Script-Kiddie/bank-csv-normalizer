@@ -189,9 +189,8 @@ def load_all_bank_configs(config_dir: str) -> dict[str, dict[str, Any]]:
         with open(full_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
 
-        bank_name = cfg.get("bank")
-        if not bank_name:
-            raise ValueError(f"Config file {filename} has no 'bank' field.")
+        bank_name = os.path.splitext(filename)[0]
+        cfg["bank"] = bank_name
 
         configs[bank_name] = cfg
 

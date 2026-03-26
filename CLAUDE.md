@@ -15,7 +15,8 @@ output format. Designed to run unattended via cron or systemd timer.
 
 | Path | Purpose |
 |------|---------|
-| `engine/core/` | Core pipeline modules (one concern each) |
+| `engine/core/` | Shared pipeline modules (validation, dedup, I/O, completion) |
+| `engine/banks/` | One module per bank — each exports `normalize_row()` |
 | `engine/process_csv.py` | Pipeline entry point; orchestrates all stages |
 | `config/` | Per-bank YAML configs + `app.env` (EMAIL_TO) |
 | `data/incoming/` | Drop CSVs here to trigger processing |
@@ -57,10 +58,12 @@ Defined in [engine/process_csv.py:278-316](engine/process_csv.py#L278):
 
 1. Create `config/<bank>.yaml` — define required columns, regex rules, filter
    values, and `duplicate_key` extraction. See [config/fintro.yaml](config/fintro.yaml) as reference.
-2. No code changes needed — `autodetect_bank()` loads all `config/*.yaml`
-   automatically ([engine/core/csv_runtime.py:174](engine/core/csv_runtime.py#L174)).
-3. If the bank has non-standard field parsing, extend `normalize_row()` in
-   [engine/core/normalize.py](engine/core/normalize.py).
+   The bank name is derived from the filename; no `bank:` field needed in the YAML.
+2. Create `engine/banks/<bank>.py` — implement `normalize_row(csv_row)`.
+   See [engine/banks/fintro.py](engine/banks/fintro.py) as reference.
+3. No further code changes needed — `autodetect_bank()` loads all `config/*.yaml`
+   automatically ([engine/core/csv_runtime.py:175](engine/core/csv_runtime.py#L175)) and
+   `process_csv.py` imports the bank module dynamically after detection.
 
 ## Additional Documentation
 

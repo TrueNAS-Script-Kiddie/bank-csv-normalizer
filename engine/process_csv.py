@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import importlib
 import os
 import sys
 import traceback
@@ -19,7 +20,6 @@ from engine.core.csv_validation import (
     validate_and_prepare,
 )
 from engine.core.duplicate_index import classify_duplicate, load_duplicate_index
-from engine.core.normalize import normalize_row
 from engine.core.runtime import log_event
 
 NORMALIZED_FIELDNAMES = [
@@ -137,7 +137,13 @@ def main() -> None:
             )
             return
 
-        log_event(logfile_path, f"Detected bank: {bank_cfg['bank']}")
+        bank_name = bank_cfg["bank"]
+        log_event(logfile_path, f"Detected bank: {bank_name}")
+
+        # -----------------------------------------------------------------
+        # Load bank-specific normalizer
+        # -----------------------------------------------------------------
+        bank_module = importlib.import_module(f"engine.banks.{bank_name}")
 
         # -----------------------------------------------------------------
         # Set bank-specific duplicate-index path
@@ -244,7 +250,7 @@ def main() -> None:
 
             # Normalize row
             try:
-                normalized_row = normalize_row(row)
+                normalized_row = bank_module.normalize_row(row)
             except Exception as exc:
                 failed_any = True
                 # write ORIGINAL CSV row to normalize-failed

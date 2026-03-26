@@ -1,5 +1,3 @@
-bank: fintro
-
 columns:
   required:
     execution_date:

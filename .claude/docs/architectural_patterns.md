@@ -33,7 +33,14 @@ hardcoded bank names. Key YAML sections:
 - `duplicate_key` — which column(s) to extract the dedup key from, with an
   optional regex to pull a sub-value
 
-New banks require only a new YAML file. See [config/fintro.yaml](../../config/fintro.yaml).
+The bank name is derived from the YAML filename by `load_all_bank_configs()` and
+injected as `cfg["bank"]` ([csv_runtime.py:192](../../engine/core/csv_runtime.py#L192)).
+
+**`engine/banks/<bank>.py`** — normalization logic, must export `normalize_row(csv_row)`.
+Loaded dynamically after detection: `importlib.import_module(f"engine.banks.{bank_name}")` ([process_csv.py:146](../../engine/process_csv.py#L146)).
+
+Adding a new bank requires only `config/<bank>.yaml` + `engine/banks/<bank>.py`.
+See [config/fintro.yaml](../../config/fintro.yaml) and [engine/banks/fintro.py](../../engine/banks/fintro.py).
 
 ## 4. Lazy Writer Pattern
 
@@ -53,7 +60,7 @@ For every field that appears in both CSV columns and the free-text `details_raw`
 column, the normalizer compares both sources and raises `ValueError` on mismatch.
 Neither source is blindly trusted.
 
-Precedence rules in [normalize.py:183](../../engine/core/normalize.py#L183):
+Precedence rules in [engine/banks/fintro.py:188](../../engine/banks/fintro.py#L188):
 - **CSV wins** for amounts, IBANs, dates, and free-text messages (details validates)
 - **Details wins** for structured references, BIC, and fields missing from CSV
 - **Structured messages** (Belgian `+++xxx/xxxx/xxxxx+++` format) take priority
@@ -67,10 +74,10 @@ Steps are labeled B1–B11. If anything remains in `details_rest` at phase C,
 it raises `ValueError("Unprocessed details content: ...")`.
 
 This makes the parser strict by default — unknown content is an error, not
-silently ignored. See [normalize.py:252](../../engine/core/normalize.py#L252)–[normalize.py:582](../../engine/core/normalize.py#L582).
+silently ignored. See [engine/banks/fintro.py:258](../../engine/banks/fintro.py#L258)–[engine/banks/fintro.py:580](../../engine/banks/fintro.py#L580).
 
 All regex patterns are module-level compiled constants (`RE_*`) at the top of
-[normalize.py:10](../../engine/core/normalize.py#L10).
+[engine/banks/fintro.py:9](../../engine/banks/fintro.py#L9).
 
 ## 7. Stateful In-Memory + Persistent Dedup Index
 

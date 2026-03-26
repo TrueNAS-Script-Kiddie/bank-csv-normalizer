@@ -518,8 +518,6 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             else:
                 # details has extra leading words ("VAN ...") → keep CSV only (no safe splice)
                 final_name = csv_name
-        else:
-            final_name = csv_name
     else:
         final_name = details_name
 
