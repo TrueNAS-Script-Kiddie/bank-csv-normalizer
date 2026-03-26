@@ -71,11 +71,15 @@ def validate_and_prepare(
         for internal_name, csv_name in column_map.items():
             mapped_row[internal_name] = raw_row.get(csv_name, "").strip()
 
-        # Apply filter rules (e.g. Status must be "Geaccepteerd")
+        # Apply filter rules (exact-match list or regex)
         skip_row = False
         for internal_name, cfg in columns_cfg["required"].items():
             if "filter" in cfg:
                 if mapped_row[internal_name] not in cfg["filter"]:
+                    skip_row = True
+                    break
+            if "filter_regex" in cfg:
+                if not re.fullmatch(cfg["filter_regex"], mapped_row[internal_name]):
                     skip_row = True
                     break
 

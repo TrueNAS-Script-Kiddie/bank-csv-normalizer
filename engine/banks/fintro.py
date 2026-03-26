@@ -209,6 +209,9 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # NON-DETAILS COLUMNS
     # ------------------------------------------------------------------
 
+    # A0 — CSV / external_id (bank_sequence_number)
+    normalized["external_id"] = csv_row["bank_sequence_number"]
+
     # A1 — CSV / amount + currency
     normalized["amount"] = csv_row["amount"].replace(",", ".").strip()
 
@@ -269,13 +272,17 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
 
     details_rest = details_rest.replace(match.group(0), "").strip()
 
-    # B2 — Details - BANKREFERENTIE / external_id
+    # B2 — Details - BANKREFERENTIE / notes (optional; absent in old transactions)
     match = RE_EXTERNAL_ID.search(details_rest)
-    if not match:
-        raise ValueError("Missing BANKREFERENTIE in details")
-
-    normalized["external_id"] = match.group(1)
-    details_rest = details_rest.replace(match.group(0), "").strip()
+    if match:
+        normalized["notes"] = append_note_line(
+            normalized["notes"],
+            "B2",
+            "BANK REFERENCE",
+            "details",
+            match.group(1),
+        )
+        details_rest = details_rest.replace(match.group(0), "").strip()
 
     # B3 — Details - UITGEVOERD OP / transaction_processing_date
     match = RE_TRANSACTION_PROCESSING_DATE.search(details_rest)
