@@ -8,14 +8,13 @@ Duplicate index management:
 This module contains all logic related to maintaining duplicate-index.csv.
 """
 
-import os
 import csv
+import os
 import shutil
-from datetime import datetime, timedelta
-from typing import List, Dict, DefaultDict, Callable, Any
 from collections import defaultdict
-from engine.core.runtime import log_event
-
+from collections.abc import Callable
+from datetime import datetime, timedelta
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Backup + rotation configuration
@@ -28,19 +27,19 @@ RUN_TS_FORMAT = "%Y%m%d-%H%M%S"
 # ---------------------------------------------------------------------------
 # Load duplicate index
 # ---------------------------------------------------------------------------
-def load_duplicate_index(duplicate_index_path: str) -> DefaultDict[str, List[Dict[str, str]]]:
+def load_duplicate_index(duplicate_index_path: str) -> defaultdict[str, list[dict[str, str]]]:
     """
     Load the global duplicate index from CSV.
     Returns a dict: duplicate_key → list of rows with that key.
     """
 
-    index: DefaultDict[str, List[Dict[str, str]]] = defaultdict(list)
+    index: defaultdict[str, list[dict[str, str]]] = defaultdict(list)
 
     if not os.path.exists(duplicate_index_path):
         return index
 
     with open(duplicate_index_path, newline="", encoding="utf-8") as index_file:
-        reader = csv.DictReader(index_file, delimiter=';')
+        reader = csv.DictReader(index_file, delimiter=";")
 
         for row in reader:
             key = (row.get("duplicate_key") or "").strip()
@@ -53,7 +52,7 @@ def load_duplicate_index(duplicate_index_path: str) -> DefaultDict[str, List[Dic
 # ---------------------------------------------------------------------------
 # Append new rows to updated_duplicate_index
 # ---------------------------------------------------------------------------
-def append_to_duplicate_index(duplicate_index_path: str, duplicate_index_rows: List[Dict[str, str]]) -> None:
+def append_to_duplicate_index(duplicate_index_path: str, duplicate_index_rows: list[dict[str, str]]) -> None:
     """
     Append new duplicate-index rows to the updated duplicate-index file.
     Creates the file with header if it does not exist.
@@ -66,7 +65,7 @@ def append_to_duplicate_index(duplicate_index_path: str, duplicate_index_rows: L
     fieldnames = list(duplicate_index_rows[0].keys())
 
     with open(duplicate_index_path, "a", newline="", encoding="utf-8") as index_file:
-        writer = csv.DictWriter(index_file, fieldnames=fieldnames, delimiter=';')
+        writer = csv.DictWriter(index_file, fieldnames=fieldnames, delimiter=";")
 
         if not file_exists:
             writer.writeheader()
@@ -83,7 +82,7 @@ def create_updated_duplicate_index(
     backup_dir: str,
     run_timestamp: str,
     csv_filename: str,
-    duplicate_index_rows: List[Dict[str, str]],
+    duplicate_index_rows: list[dict[str, str]],
 ) -> str:
     """
     Create a timestamped updated duplicate-index file:
@@ -96,8 +95,7 @@ def create_updated_duplicate_index(
     # Path for updated snapshot
     bank_name = os.path.splitext(os.path.basename(duplicate_index_path))[0].replace("-duplicate-index", "")
     updated_duplicate_index = os.path.join(
-        backup_dir,
-        f"{run_timestamp}-{os.path.splitext(csv_filename)[0]}-{bank_name}-duplicate-index.csv"
+        backup_dir, f"{run_timestamp}-{os.path.splitext(csv_filename)[0]}-{bank_name}-duplicate-index.csv"
     )
 
     # Base: existing dup-index or empty file
@@ -130,7 +128,7 @@ def rotate_duplicate_backups(
 
         for filename in os.listdir(backup_dir):
             if filename.endswith("-duplicate-index.csv"):
-                ts_part = filename[:-len("-duplicate-index.csv")]
+                ts_part = filename[: -len("-duplicate-index.csv")]
                 try:
                     timestamp = datetime.strptime(ts_part, RUN_TS_FORMAT)
                     backup_files.append((timestamp, filename))
@@ -157,7 +155,7 @@ def rotate_duplicate_backups(
         # Enforce MAX_BACKUPS
         if len(kept) > MAX_BACKUPS:
             excess = len(kept) - MAX_BACKUPS
-            for timestamp, filename in kept[:excess]:
+            for _, filename in kept[:excess]:
                 try:
                     os.remove(os.path.join(backup_dir, filename))
                 except Exception as exc:
@@ -171,10 +169,10 @@ def rotate_duplicate_backups(
 # Classify rows against the duplicate index
 # ---------------------------------------------------------------------------
 def classify_duplicate(
-    duplicate_index: Dict[str, List[Dict[str, Any]]],
+    duplicate_index: dict[str, list[dict[str, Any]]],
     key: str,
-    row: Dict[str, Any],
-    bank_config: Dict[str, Any],
+    row: dict[str, Any],
+    bank_config: dict[str, Any],
 ) -> str:
     """
     Classify a row against the duplicate index using YAML rules.

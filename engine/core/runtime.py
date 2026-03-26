@@ -13,11 +13,10 @@ Functions included:
 - send_email: send notifications via system sendmail (TrueNAS compatible)
 """
 
+import json
 import os
 import subprocess
-import json
 from datetime import datetime
-from typing import Dict, List
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +40,7 @@ def log_event(logfile_path: str, message: str) -> None:
 # ---------------------------------------------------------------------------
 # Minimal .env loader
 # ---------------------------------------------------------------------------
-def load_env(path: str) -> Dict[str, str]:
+def load_env(path: str) -> dict[str, str]:
     """
     Load a minimal .env file containing simple KEY=VALUE pairs.
 
@@ -52,7 +51,7 @@ def load_env(path: str) -> Dict[str, str]:
 
     This loader is intentionally minimalistic to avoid dependencies.
     """
-    config: Dict[str, str] = {}
+    config: dict[str, str] = {}
 
     if not os.path.exists(path):
         return config
@@ -102,8 +101,7 @@ def send_email(subject: str, body: str, log_event, logfile_path: str) -> None:
         # Call midclt in argv mode (no shell, no quoting issues)
         subprocess.run(
             ["/usr/bin/midclt", "call", "mail.send", json_arg],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
 

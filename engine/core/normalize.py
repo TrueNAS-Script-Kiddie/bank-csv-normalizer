@@ -1,12 +1,12 @@
 import re
 import unicodedata
-from typing import Dict, Any, Optional
-
+from typing import Any
 
 # ----------------------------------------------------------------------
 # Regex definitions
 # ----------------------------------------------------------------------
 
+# fmt: off
 RE_BOOKING_DATE = re.compile(
     r"VALUTADATUM\s*:\s*(\d{2}/\d{2}/\d{4})$"
 )
@@ -109,10 +109,13 @@ RE_STRUCTURED_REFERENCE = re.compile(
 RE_MANDATE_REFERENCE = re.compile(
     r"\bMANDAAT\s+NUMMER\s*:\s*([A-Z0-9]+)\b"
 )
+# fmt: on
+
 
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
 
 def normalize_iban(value: str) -> str:
     return re.sub(r"\s+", "", value).upper()
@@ -122,7 +125,7 @@ def is_iban(value: str) -> bool:
     return bool(RE_IBAN_STRICT.fullmatch(normalize_iban(value)))
 
 
-def parse_ddmmyyyy(value: str, fallback_year: Optional[str] = None) -> str:
+def parse_ddmmyyyy(value: str, fallback_year: str | None = None) -> str:
     parts = value.split("/")
     if len(parts) == 3:
         day, month, year = parts
@@ -147,7 +150,8 @@ def canonicalize_structured_reference(raw: str) -> str:
 def normalize_name(value: str) -> str:
     return re.sub(r"\s+", " ", value.upper()).strip()
 
-def extract_structured_message(value: str) -> Optional[str]:
+
+def extract_structured_message(value: str) -> str | None:
     if not value:
         return None
 
@@ -163,14 +167,17 @@ def extract_structured_message(value: str) -> Optional[str]:
 
     return None
 
+
 def normalize_for_message_compare(value: str) -> str:
     value = unicodedata.normalize("NFD", value)
     value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
     return re.sub(r"\s+", "", value).upper()
 
+
 def append_note_line(notes: str, step: str, role: str, source: str, value: str) -> str:
     line = f"{step}) {role} ({source}): {value}"
     return f"{notes}\n{line}" if notes else line
+
 
 def normalize_for_name_compare(value: str) -> str:
     return re.sub(r"\s+", "", value).upper()
@@ -180,23 +187,23 @@ def normalize_for_name_compare(value: str) -> str:
 # Main normalize function
 # ----------------------------------------------------------------------
 
-def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
-    normalized: Dict[str, Any] = {
-        "external_id": "",                   # 1
-        "primary_transaction_date": "",      # 2
-        "transaction_processing_date": "",   # 3
-        "booking_date": "",                  # 4
-        "payment_date": "",                  # 5
-        "amount": "",                        # 6
-        "account_currency_code": "",         # 7
-        "asset_account_iban": "",            # 8
-        "opposing_account_iban": "",         # 9
-        "opposing_account_bic": "",          # 10
-        "opposing_account_name": "",         # 11
-        "description": "",                   # 12
-        "notes": "",                         # 13
-    }
 
+def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {
+        "external_id": "",  # 1
+        "primary_transaction_date": "",  # 2
+        "transaction_processing_date": "",  # 3
+        "booking_date": "",  # 4
+        "payment_date": "",  # 5
+        "amount": "",  # 6
+        "account_currency_code": "",  # 7
+        "asset_account_iban": "",  # 8
+        "opposing_account_iban": "",  # 9
+        "opposing_account_bic": "",  # 10
+        "opposing_account_name": "",  # 11
+        "description": "",  # 12
+        "notes": "",  # 13
+    }
 
     # ------------------------------------------------------------------
     # NON-DETAILS COLUMNS
@@ -236,7 +243,6 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         normalized["description"] = csv_structured
     else:
         normalized["description"] = message
-
 
     # ------------------------------------------------------------------
     # DETAILS COLUMN
@@ -295,8 +301,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
             if csv_structured and details_structured:
                 if csv_structured != details_structured:
                     raise ValueError(
-                        f"Structured message mismatch: "
-                        f"csv='{csv_structured}' details='{details_structured}'"
+                        f"Structured message mismatch: csv='{csv_structured}' details='{details_structured}'"
                     )
                 normalized["description"] = csv_structured
             elif csv_structured:
@@ -311,10 +316,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
                 n_det = normalize_for_message_compare(details_mededeling)
 
                 if n_csv != n_det:
-                    raise ValueError(
-                        f"Mededeling mismatch: "
-                        f"csv='{csv_description}' details='{details_mededeling}'"
-                    )
+                    raise ValueError(f"Mededeling mismatch: csv='{csv_description}' details='{details_mededeling}'")
                 # CSV version is authoritative → keep it
             else:
                 normalized["description"] = details_mededeling
@@ -397,7 +399,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         free_tail = match.group(4).strip() if match.group(4) else None
 
         csv_tx = normalize_for_message_compare(csv_row["transaction_type"])
-        b9_tx  = normalize_for_message_compare(tx_type)
+        b9_tx = normalize_for_message_compare(tx_type)
 
         # Strip only explicitly allowed, semantically empty suffixes
         for suffix in ("VAN REKENING", "NAAR REKENING", "OP REKENING"):
@@ -492,12 +494,10 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
             n_det = normalize_for_name_compare(details_name)
 
             if n_csv not in n_det:
-                raise ValueError(
-                    f"Counterparty name mismatch: "
-                    f"csv='{csv_name}' details='{details_name}'"
-                )
+                raise ValueError(f"Counterparty name mismatch: csv='{csv_name}' details='{details_name}'")
 
-            # If details begins with the same name (ignoring caps/spaces), keep CSV casing + append the remaining tail (address etc.)
+            # If details begins with the same name (ignoring caps/spaces),
+            # keep CSV casing + append the remaining tail (address etc.)
             if n_det.startswith(n_csv):
                 # compute tail length in original string by using normalized lengths
                 tail_norm_len = len(n_det) - len(n_csv)
@@ -543,10 +543,7 @@ def normalize_row(csv_row: Dict[str, str]) -> Dict[str, Any]:
         if pending_b9_tx_norm != tx_type_norm and tx_type_norm in pending_b9_tx_norm:
             suppress_a5 = True
 
-    append_channel_to_a5 = (
-        pending_b8_payment_channel
-        and pending_b8_payment_channel.upper().startswith("VIA")
-    )
+    append_channel_to_a5 = pending_b8_payment_channel and pending_b8_payment_channel.upper().startswith("VIA")
 
     if not suppress_a5:
         a5_value = csv_row["transaction_type"]

@@ -13,8 +13,9 @@ Nothing more, nothing less.
 
 import csv
 import os
+from typing import Any
+
 import yaml
-from typing import Any, Dict, List
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +25,7 @@ def build_paths(
     data_dir: str,
     run_timestamp: str,
     csv_filename: str,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """
     Construct all directory and file paths for a single pipeline run.
 
@@ -36,6 +37,8 @@ def build_paths(
 
     name_without_ext, _ = os.path.splitext(csv_filename)
 
+    # ruff: noqa: E501
+    # fmt: off
     return {
         # Directories
         "incoming_dir": os.path.join(data_dir, "incoming"),
@@ -66,12 +69,14 @@ def build_paths(
         "normalized_partial_csv": os.path.join(data_dir, "normalized", f"{run_timestamp}-{name_without_ext}-normalized-partial.csv"),
         "normalized_success_csv": os.path.join(data_dir, "normalized", f"{run_timestamp}-{name_without_ext}-normalized.csv"),
     }
+    # fmt: on
+    # ruff: enable=E501
 
 
 # ---------------------------------------------------------------------------
 # Load CSV
 # ---------------------------------------------------------------------------
-def load_csv_rows(csv_file_path: str) -> List[Dict[str, str]]:
+def load_csv_rows(csv_file_path: str) -> list[dict[str, str]]:
     """
     Load CSV rows into a list of dictionaries.
 
@@ -98,7 +103,7 @@ def load_csv_rows(csv_file_path: str) -> List[Dict[str, str]]:
 
     for enc in encodings_to_try:
         try:
-            with open(csv_file_path, "r", encoding=enc) as f:
+            with open(csv_file_path, encoding=enc) as f:
                 file_text = f.read()
             used_encoding = enc
             break
@@ -120,9 +125,9 @@ def load_csv_rows(csv_file_path: str) -> List[Dict[str, str]]:
     # ------------------------------------------------------------
     # 3. Parse CSV using detected encoding + dialect
     # ------------------------------------------------------------
-    rows: List[Dict[str, str]] = []
+    rows: list[dict[str, str]] = []
 
-    with open(csv_file_path, "r", encoding=used_encoding, newline="") as f:
+    with open(csv_file_path, encoding=used_encoding, newline="") as f:
         reader = csv.DictReader(f, dialect=detected_dialect)
         for row in reader:
             cleaned_row = {k: (v if v is not None else "") for k, v in row.items()}
@@ -134,15 +139,11 @@ def load_csv_rows(csv_file_path: str) -> List[Dict[str, str]]:
 # ---------------------------------------------------------------------------
 # Writer creation
 # ---------------------------------------------------------------------------
-def ensure_writer(
-    path: str,
-    writer_ref: Dict[str, Any],
-    fieldnames: List[str]
-) -> csv.DictWriter:
+def ensure_writer(path: str, writer_ref: dict[str, Any], fieldnames: list[str]) -> csv.DictWriter:
     """Lazily create a CSV writer and file handle. Headers written once."""
     if writer_ref.get("writer") is None:
         f = open(path, "w", newline="", encoding="utf-8")
-        w = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
+        w = csv.DictWriter(f, fieldnames=fieldnames, delimiter=";")
         w.writeheader()
         writer_ref["writer"] = w
         writer_ref["file"] = f
@@ -153,7 +154,7 @@ def ensure_writer(
 # ---------------------------------------------------------------------------
 # Write a failed row
 # ---------------------------------------------------------------------------
-def write_failed_row(path: str, writer_ref: Dict[str, Any], row: Dict[str, Any]) -> None:
+def write_failed_row(path: str, writer_ref: dict[str, Any], row: dict[str, Any]) -> None:
     """Write a failed row to the given CSV file."""
     writer = ensure_writer(path, writer_ref, list(row.keys()))
     writer.writerow(row)
@@ -162,22 +163,22 @@ def write_failed_row(path: str, writer_ref: Dict[str, Any], row: Dict[str, Any])
 # ---------------------------------------------------------------------------
 # Load normalized rows
 # ---------------------------------------------------------------------------
-def load_normalized_rows(path: str) -> List[Dict[str, Any]]:
+def load_normalized_rows(path: str) -> list[dict[str, Any]]:
     """Load all normalized rows from a temporary output file."""
     with open(path, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f, delimiter=';'))
+        return list(csv.DictReader(f, delimiter=";"))
 
 
 # ---------------------------------------------------------------------------
 # Load all bank configs
 # ---------------------------------------------------------------------------
-def load_all_bank_configs(config_dir: str) -> Dict[str, Dict[str, Any]]:
+def load_all_bank_configs(config_dir: str) -> dict[str, dict[str, Any]]:
     """
     Load all YAML bank configuration files from the given directory.
     Returns a dict: bank_name -> config_dict
     """
 
-    configs: Dict[str, Dict[str, Any]] = {}
+    configs: dict[str, dict[str, Any]] = {}
 
     for filename in os.listdir(config_dir):
         if not filename.endswith(".yaml"):
@@ -185,7 +186,7 @@ def load_all_bank_configs(config_dir: str) -> Dict[str, Dict[str, Any]]:
 
         full_path = os.path.join(config_dir, filename)
 
-        with open(full_path, "r", encoding="utf-8") as f:
+        with open(full_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
 
         bank_name = cfg.get("bank")

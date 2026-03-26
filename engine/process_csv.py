@@ -1,45 +1,41 @@
 #!/usr/bin/env python3
-import sys
 import os
-import csv
+import sys
 import traceback
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+import engine.core.completion as completion
 from engine.core.csv_runtime import (
-    load_csv_rows,
-    write_failed_row,
-    load_normalized_rows,
     build_paths,
     ensure_writer,
     load_all_bank_configs,
+    load_csv_rows,
+    load_normalized_rows,
+    write_failed_row,
 )
 from engine.core.csv_validation import (
     autodetect_bank,
-    validate_and_prepare,
     extract_duplicate_key,
+    validate_and_prepare,
 )
-
+from engine.core.duplicate_index import classify_duplicate, load_duplicate_index
 from engine.core.normalize import normalize_row
-from engine.core.duplicate_index import load_duplicate_index, classify_duplicate
 from engine.core.runtime import log_event
-import engine.core.completion as completion
-
 
 NORMALIZED_FIELDNAMES = [
-    "external_id",                 # 1
-    "primary_transaction_date",    # 2
-    "transaction_processing_date", # 3
-    "booking_date",                # 4
-    "payment_date",                # 5
-    "amount",                      # 6
-    "account_currency_code",       # 7
-    "asset_account_iban",          # 8
-    "opposing_account_iban",       # 9
-    "opposing_account_bic",        # 10
-    "opposing_account_name",       # 11
-    "description",                 # 12
-    "notes",                       # 13
+    "external_id",  # 1
+    "primary_transaction_date",  # 2
+    "transaction_processing_date",  # 3
+    "booking_date",  # 4
+    "payment_date",  # 5
+    "amount",  # 6
+    "account_currency_code",  # 7
+    "asset_account_iban",  # 8
+    "opposing_account_iban",  # 9
+    "opposing_account_bic",  # 10
+    "opposing_account_name",  # 11
+    "description",  # 12
+    "notes",  # 13
 ]
 
 
@@ -84,7 +80,7 @@ def main() -> None:
     # ---------------------------------------------------------------------
     # CONTEXT (legacy + new paths[])
     # ---------------------------------------------------------------------
-    context: Dict[str, Any] = {
+    context: dict[str, Any] = {
         "csv_file_path": csv_file_path,
         "csv_filename": csv_filename,
         "run_timestamp": run_timestamp,
@@ -114,7 +110,7 @@ def main() -> None:
         # -----------------------------------------------------------------
         # Load CSV
         # -----------------------------------------------------------------
-        csv_rows: List[Dict[str, Any]] = load_csv_rows(csv_file_path)
+        csv_rows: list[dict[str, Any]] = load_csv_rows(csv_file_path)
         log_event(logfile_path, f"Loaded {len(csv_rows)} raw rows")
 
         if not csv_rows:
@@ -158,7 +154,7 @@ def main() -> None:
         log_event(logfile_path, f"Validated {len(validated_rows)} rows after filtering")
 
         # Attach original CSV row for normalize-failed output
-        indexed_validated_rows: List[Dict[str, Any]] = []
+        indexed_validated_rows: list[dict[str, Any]] = []
         for idx, vrow in enumerate(validated_rows):
             vrow["_original_csv_row"] = csv_rows[idx]
             indexed_validated_rows.append(vrow)
@@ -191,7 +187,7 @@ def main() -> None:
         normalized_any = False
 
         # Rows that must be added to the duplicate-index
-        duplicate_index_rows_to_add: List[Dict[str, Any]] = []
+        duplicate_index_rows_to_add: list[dict[str, Any]] = []
         context["duplicate_index_rows_to_add"] = duplicate_index_rows_to_add
 
         # Required fields for duplicate-index rows

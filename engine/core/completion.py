@@ -12,22 +12,22 @@ This module is the single exit path for the entire processing flow.
 """
 
 import os
-import sys
 import shutil
+import sys
 import traceback
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from engine.core.duplicate_index import (
     create_updated_duplicate_index,
     rotate_duplicate_backups,
 )
-from engine.core.runtime import log_event, send_email
+from engine.core.runtime import send_email
 
 
 # ---------------------------------------------------------------------------
 # Logging + email + exit
 # ---------------------------------------------------------------------------
-def log_email_exit(context: Dict[str, Any], exit_code: int, message: str) -> None:
+def log_email_exit(context: dict[str, Any], exit_code: int, message: str) -> None:
     """Write final log entry, send email, then exit."""
 
     log_event = context["log_event"]
@@ -38,11 +38,7 @@ def log_email_exit(context: Dict[str, Any], exit_code: int, message: str) -> Non
     log_event(logfile_path, message)
 
     subject = message
-    body = (
-        f"File: {csv_filename}\n"
-        f"Timestamp: {run_timestamp}\n"
-        f"{message}"
-    )
+    body = f"File: {csv_filename}\nTimestamp: {run_timestamp}\n{message}"
 
     send_email(
         subject=subject,
@@ -57,7 +53,7 @@ def log_email_exit(context: Dict[str, Any], exit_code: int, message: str) -> Non
 # ---------------------------------------------------------------------------
 # Close all open writers
 # ---------------------------------------------------------------------------
-def close_open_writers(context: Dict[str, Any]) -> None:
+def close_open_writers(context: dict[str, Any]) -> None:
     """Close all file handles associated with CSV writers."""
     for ref in context["open_writers"]:
         f = ref.get("file")
@@ -72,10 +68,10 @@ def close_open_writers(context: Dict[str, Any]) -> None:
 # Finalization
 # ---------------------------------------------------------------------------
 def finalize(
-    context: Dict[str, Any],
+    context: dict[str, Any],
     exit_code: int,
     outcome: str,
-    normalized_rows: Optional[List[Dict[str, Any]]],
+    normalized_rows: list[dict[str, Any]] | None,
     message: str,
 ) -> None:
     """
@@ -91,9 +87,7 @@ def finalize(
 
     # Rows that must be added to the duplicate-index for this run.
     # These are prepared in process_csv.py and are independent of normalized output.
-    duplicate_index_rows_to_add: List[Dict[str, Any]] = context.get(
-        "duplicate_index_rows_to_add", []
-    )
+    duplicate_index_rows_to_add: list[dict[str, Any]] = context.get("duplicate_index_rows_to_add", [])
 
     # ----------------------------------------------------------------------
     # 1. Prepare duplicate-index update (not critical)

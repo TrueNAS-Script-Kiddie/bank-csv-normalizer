@@ -1,13 +1,13 @@
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+
 
 # ---------------------------------------------------------------------------
 # Validate CSV structure
 # ---------------------------------------------------------------------------
 def validate_and_prepare(
-    csv_rows: List[Dict[str, str]],
-    bank_config: Dict[str, Any]
-) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
+    csv_rows: list[dict[str, str]], bank_config: dict[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """
     Validate CSV structure, apply filtering rules, and map CSV column names
     to internal field names based on the bank configuration.
@@ -31,7 +31,7 @@ def validate_and_prepare(
     # ----------------------------------------------------------------------
     # 1. Build column_map: internal_name -> actual CSV column name
     # ----------------------------------------------------------------------
-    column_map: Dict[str, str] = {}
+    column_map: dict[str, str] = {}
 
     # Required columns must exist
     for internal_name, cfg in columns_cfg["required"].items():
@@ -62,24 +62,24 @@ def validate_and_prepare(
     # ----------------------------------------------------------------------
     # 2. Validate rows + apply filtering + regex checks
     # ----------------------------------------------------------------------
-    validated_rows: List[Dict[str, str]] = []
+    validated_rows: list[dict[str, str]] = []
 
     for raw_row in csv_rows:
-        mapped_row: Dict[str, str] = {}
+        mapped_row: dict[str, str] = {}
 
         # Map CSV columns to internal names
         for internal_name, csv_name in column_map.items():
             mapped_row[internal_name] = raw_row.get(csv_name, "").strip()
 
         # Apply filter rules (e.g. Status must be "Geaccepteerd")
+        skip_row = False
         for internal_name, cfg in columns_cfg["required"].items():
             if "filter" in cfg:
                 if mapped_row[internal_name] not in cfg["filter"]:
-                    # Drop this row silently
-                    mapped_row = None
+                    skip_row = True
                     break
 
-        if mapped_row is None:
+        if skip_row:
             continue
 
         # Regex validation
@@ -100,10 +100,7 @@ def validate_and_prepare(
 # ---------------------------------------------------------------------------
 # Extract unique key for duplicate detection
 # ---------------------------------------------------------------------------
-def extract_duplicate_key(
-    row: Dict[str, str],
-    bank_config: Dict[str, Any]
-) -> Optional[str]:
+def extract_duplicate_key(row: dict[str, str], bank_config: dict[str, Any]) -> str | None:
     """
     Extract the duplicate detection key for a validated & mapped CSV row.
 
@@ -160,11 +157,9 @@ def extract_duplicate_key(
     return combined or None
 
 
-
 def autodetect_bank(
-    csv_rows: List[Dict[str, str]],
-    all_bank_configs: Dict[str, Dict[str, Any]]
-) -> Optional[Dict[str, Any]]:
+    csv_rows: list[dict[str, str]], all_bank_configs: dict[str, dict[str, Any]]
+) -> dict[str, Any] | None:
     """
     Determine which bank configuration matches the CSV based on required columns.
 
@@ -183,19 +178,19 @@ def autodetect_bank(
         return None
 
     csv_header = list(csv_rows[0].keys())
-    matching_banks: List[Dict[str, Any]] = []
+    matching_banks: list[dict[str, Any]] = []
 
     # ----------------------------------------------------------------------
     # Check each bank config
     # ----------------------------------------------------------------------
-    for bank_name, bank_cfg in all_bank_configs.items():
+    for _bank_name, bank_cfg in all_bank_configs.items():
         columns_cfg = bank_cfg.get("columns", {})
         required_cfg = columns_cfg.get("required", {})
 
         all_required_present = True
 
         # Check each required internal field
-        for internal_name, col_cfg in required_cfg.items():
+        for _internal_name, col_cfg in required_cfg.items():
             possible_names = col_cfg.get("names", [])
 
             # Does ANY of the possible CSV column names exist?

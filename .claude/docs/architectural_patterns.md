@@ -74,7 +74,7 @@ All regex patterns are module-level compiled constants (`RE_*`) at the top of
 
 ## 7. Stateful In-Memory + Persistent Dedup Index
 
-The dedup index is a `DefaultDict[str, List[Dict]]` loaded from a bank-specific
+The dedup index is a `defaultdict[str, list[dict]]` loaded from a bank-specific
 CSV at the start of each run. New rows are appended to the in-memory dict during
 the loop so that intra-batch duplicates are caught before the index is committed.
 
