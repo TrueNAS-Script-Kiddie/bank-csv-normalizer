@@ -126,14 +126,15 @@ def main() -> None:
         # -----------------------------------------------------------------
         # Autodetect bank
         # -----------------------------------------------------------------
-        bank_cfg = autodetect_bank(csv_rows, bank_configs)
-        if bank_cfg is None:
+        try:
+            bank_cfg = autodetect_bank(csv_rows, bank_configs)
+        except ValueError as exc:
             completion.finalize(
                 context,
                 exit_code=65,
                 outcome="structure_failed",
                 normalized_rows=None,
-                message="BANK AUTODETECT FAILED",
+                message=f"BANK AUTODETECT FAILED: {exc}",
             )
             return
 

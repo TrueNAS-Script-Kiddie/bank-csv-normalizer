@@ -96,7 +96,7 @@ def load_csv_rows(csv_file_path: str) -> list[dict[str, str]]:
     # ------------------------------------------------------------
     # 1. Try reading file with different encodings
     # ------------------------------------------------------------
-    encodings_to_try = ["utf-8", "cp1252", "utf-16"]
+    encodings_to_try = ["utf-8-sig", "cp1252", "utf-16"]
 
     file_text = None
     used_encoding = None

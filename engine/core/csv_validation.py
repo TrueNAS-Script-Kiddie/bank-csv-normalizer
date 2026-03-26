@@ -161,9 +161,7 @@ def extract_duplicate_key(row: dict[str, str], bank_config: dict[str, Any]) -> s
     return combined or None
 
 
-def autodetect_bank(
-    csv_rows: list[dict[str, str]], all_bank_configs: dict[str, dict[str, Any]]
-) -> dict[str, Any] | None:
+def autodetect_bank(csv_rows: list[dict[str, str]], all_bank_configs: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """
     Determine which bank configuration matches the CSV based on required columns.
 
@@ -179,7 +177,7 @@ def autodetect_bank(
     """
 
     if not csv_rows:
-        return None
+        raise ValueError("CSV contains no rows, cannot detect bank.")
 
     csv_header = list(csv_rows[0].keys())
     matching_banks: list[dict[str, Any]] = []
@@ -212,7 +210,19 @@ def autodetect_bank(
         return matching_banks[0]
 
     if len(matching_banks) == 0:
-        return None
+        missing_per_bank = []
+        for bank_name, bank_cfg in all_bank_configs.items():
+            required_cfg = bank_cfg.get("columns", {}).get("required", {})
+            missing = [
+                f"{internal_name} (expected one of: {col_cfg.get('names', [])})"
+                for internal_name, col_cfg in required_cfg.items()
+                if not any(name in csv_header for name in col_cfg.get("names", []))
+            ]
+            if missing:
+                missing_per_bank.append(f"{bank_name}: missing columns: {missing}")
+            else:
+                missing_per_bank.append(f"{bank_name}: all columns present (unexpected non-match)")
+        raise ValueError(f"No bank config matches CSV headers {csv_header}. " + " | ".join(missing_per_bank))
 
     # More than one match → ambiguous CSV
     bank_names = [cfg.get("bank", "<unknown>") for cfg in matching_banks]
