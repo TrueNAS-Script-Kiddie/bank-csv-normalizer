@@ -56,7 +56,7 @@ See [csv_runtime.py:137](../../engine/core/csv_runtime.py#L137) and [process_csv
 
 ## 5. Two-Source Data Reconciliation
 
-For every field that appears in both CSV columns and the free-text `details_raw`
+For every field that appears in both CSV columns and the free-text `details`
 column, the normalizer compares both sources and raises `ValueError` on mismatch.
 Neither source is blindly trusted.
 
@@ -66,11 +66,11 @@ Precedence rules in [engine/banks/fintro.py:188](../../engine/banks/fintro.py#L1
 - **Structured messages** (Belgian `+++xxx/xxxx/xxxxx+++` format) take priority
   over free-text when either source has one
 
-## 6. Sequential Regex Parsing of details_raw
+## 6. Sequential Regex Parsing of details
 
-`normalize_row()` works through the `details_raw` string destructively:
-each matched segment is stripped from `details_rest` after extraction.
-Steps are labeled B1–B11. If anything remains in `details_rest` at phase C,
+`normalize_row()` works through the `details` string destructively:
+each matched segment is stripped from `remaining_details` after extraction.
+Steps are labeled B1–B11. If anything remains in `remaining_details` at phase C,
 it raises `ValueError("Unprocessed details content: ...")`.
 
 This makes the parser strict by default — unknown content is an error, not

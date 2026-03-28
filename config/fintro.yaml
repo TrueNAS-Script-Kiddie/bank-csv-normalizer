@@ -1,10 +1,14 @@
 columns:
   required:
-    execution_date:
+    external_id:
+      names: ["Volgnummer"]
+      filter_regex: "^[0-9]{4}-[0-9]+$"
+
+    primary_transaction_date:
       names: ["Uitvoeringsdatum"]
       regex: "^[0-9]{2}/[0-9]{2}/[0-9]{4}$"
 
-    value_date:
+    booking_date:
       names: ["Valutadatum"]
       regex: "^[0-9]{2}/[0-9]{2}/[0-9]{4}$"
 
@@ -12,40 +16,36 @@ columns:
       names: ["Bedrag"]
       regex: "^-?[0-9]+([.,][0-9]+)?$"
 
-    currency:
+    account_currency_code:
       names: ["Valuta rekening"]
       regex: "^.+$"
 
-    account_iban:
+    asset_account_iban:
       names: ["Rekeningnummer"]
       regex: "^[A-Z]{2}[0-9A-Z]{13,30}$"
 
     transaction_type:
       names: ["Type verrichting"]
 
-    counterparty:
+    opposing_account_iban:
       names: ["Tegenpartij"]
 
-    counterparty_name:
+    opposing_account_name:
       names: ["Naam van de tegenpartij"]
 
-    message:
+    description:
       names: ["Mededeling"]
 
-    details_raw:
+    details:
       names: ["Details"]
 
     status:
       names: ["Status"]
       filter: ["Geaccepteerd"]
 
-    bank_sequence_number:
-      names: ["Volgnummer"]
-      filter_regex: "^[0-9]{4}-[0-9]+$"
-
   optional:
     reject_reason:
       names: ["Reden van weigering"]
 
 duplicate_key:
-  columns: ["bank_sequence_number"]
+  columns: ["external_id"]

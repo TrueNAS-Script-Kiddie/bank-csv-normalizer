@@ -1,157 +1,74 @@
 import re
 import unicodedata
+from datetime import date
 from typing import Any
-
-# ----------------------------------------------------------------------
-# Regex definitions
-# ----------------------------------------------------------------------
-
-# fmt: off
-RE_BOOKING_DATE = re.compile(
-    r"VALUTADATUM\s*:\s*(\d{2}/\d{2}/\d{4})$"
-)
-
-RE_EXTERNAL_ID = re.compile(
-    r"BANKREFERENTIE\s*:\s*([0-9]+)"
-)
-
-RE_TRANSACTION_PROCESSING_DATE = re.compile(
-    r"UITGEVOERD OP\s+(\d{2}/\d{2}(?:/\d{4})?)$"
-)
-
-RE_DESCRIPTION = re.compile(
-    r"MEDEDELING\s*:\s*(.*)$"
-)
-
-RE_NO_DESCRIPTION = re.compile(
-    r"\bZONDER\s+MEDEDELING\b$"
-)
-
-
-RE_PAYMENT_DATE_TIME = re.compile(
-    r"(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}))?"
-)
-
-RE_CARD_NETWORK = re.compile(
-    r"(BANCONTACT(?: PAYCONIQ CO)?|VISA DEBIT)"
-    r"(?:\s*-\s*(CONTACTLOOS|eCommerce))?"
-)
-
-RE_CARD_NUMBER_CONTAINER = re.compile(
-    r"(BETALING MET DEBETKAART NUMMER|"
-    r"OP DE REKENING GEKOPPELD AAN DE DEBETKAART NUMMER)\s+([0-9X ]+)"
-)
-
-RE_PAYMENT_CHANNEL = re.compile(
-    r"(VIA MOBILE BANKING|VIA WEB BANKING|P2P MOBILE|MOBIELE BETALING)"
-)
-
-RE_IBAN_STRICT = re.compile(
-    r"[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}"
-)
-
-RE_IBAN_BEFORE_BIC = re.compile(
-    r"\b([A-Z]{2}\s*\d{2}(?:\s*[A-Z0-9]){10,30})\s+BIC\b"
-)
-
-RE_BIC = re.compile(
-    r"\b([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b"
-)
-
-RE_IBAN_BIC = re.compile(
-    r"\b([A-Z]{2}\s*\d{2}(?:\s*[A-Z0-9]){10,30})\s+BIC\s+([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b"
-)
-
-RE_TRANSACTION_TYPE = re.compile(
-    r"\b(?:"
-    r"(STORTING)(?:\s+VAN\s+(.+))?"  # (1)=type, (2)=van_tail
-    r"|"
-    r"(MAANDELIJKSE\s+BIJDRAGE)(?:\s+(.+))?"  # (3)=type, (4)=free_tail
-    r"|"
-    r"("
-    r"UW\s+DOORLOPENDE\s+OPDRACHT\s+TEN\s+GUNSTE\s+VAN\s+REKENING|"
-    r"WERO\s+OVERSCHRIJVING\s+IN\s+EURO|"
-    r"INSTANTOVERSCHRIJVING\s+IN\s+EURO|"
-    r"OVERSCHRIJVING\s+IN\s+EURO(?:\s+OP\s+REKENING|\s+VAN\s+REKENING)?|"
-    r"EUROPESE\s+DOMICILIERING|"
-    r"TERUGBETALING\s+WOONKREDIET(?:\s+[0-9\-]+)?"
-    r")"  # (5)=type
-    r")\b",
-    re.IGNORECASE,
-)
-
-RE_TRANSACTION_DIRECTION = re.compile(
-    r"\b("
-    r"OVERSCHRIJVING\s+IN\s+EURO\s+OP\s+REKENING|"
-    r"OVERSCHRIJVING\s+IN\s+EURO\s+VAN\s+REKENING|"
-    r"OPDRACHTGEVER\s+REKENING\s*:"
-    r")",
-    re.IGNORECASE,
-)
-
-RE_TECHNICAL_REFERENCE = re.compile(
-    r"\b("
-    r"UW\s+REFERTE\s*:\s*.+?|"
-    r"REFERTE\s+OPDRACHTGEVER\s*:\s*.+?|"
-    r"REFERTE\s*:\s*.+?"
-    r")(?=\s+(?:MANDAAT\s+NUMMER)\s*:|$)",
-    re.IGNORECASE,
-)
-
-RE_ADDRESS = re.compile(
-    r"\b\d{4}\s+[A-Z][A-Z\s\-]+(?:\s+[A-Z]{2,})?\b"
-)
-
-RE_STRUCTURED_REFERENCE = re.compile(
-    r"(\+{0,3}\s*\d{3}\s*/\s*\d{4}\s*/\s*\d{5}\s*\+{0,3})"
-)
-
-RE_MANDATE_REFERENCE = re.compile(
-    r"\bMANDAAT\s+NUMMER\s*:\s*([A-Z0-9]+)\b"
-)
-# fmt: on
-
 
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
 
 
-def normalize_iban(value: str) -> str:
-    return re.sub(r"\s+", "", value).upper()
+def parse_iban(value: str, *, error_message: str | None = None) -> str:
+    # Accept empty string as-is
+    if value == "":
+        return ""
+
+    iban = re.sub(r"\s+", "", value).upper()
+
+    if not re.fullmatch(r"[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}", iban):
+        msg = error_message or f"Invalid IBAN: '{value}' -> '{iban}'"
+        raise ValueError(msg)
+
+    return iban
 
 
-def is_iban(value: str) -> bool:
-    return bool(RE_IBAN_STRICT.fullmatch(normalize_iban(value)))
+def parse_ddmmyyyy(
+    value: str,
+    fallback_date_str: str | None = None,
+) -> str:
+    """
+    Parse 'dd/mm' or 'dd/mm/yyyy' into 'YYYY-MM-DD'.
+    """
 
+    # Convert fallback_date_str string → date object (into a NEW variable)
+    if fallback_date_str is not None:
+        fallback_date = date.fromisoformat(fallback_date_str)
 
-def parse_ddmmyyyy(value: str, fallback_year: str | None = None) -> str:
     parts = value.split("/")
     if len(parts) == 3:
-        day, month, year = parts
-    elif len(parts) == 2:
-        if not fallback_year:
-            raise ValueError(f"Missing year in date: {value}")
-        day, month = parts
-        year = fallback_year
-    else:
-        raise ValueError(f"Invalid date format: {value}")
+        day, month, year = map(int, parts)
+        return date(year, month, day).isoformat()
 
-    return f"{year}-{month}-{day}"
+    if len(parts) == 2:
+        if fallback_date is None:
+            raise ValueError(f"Missing year in date and no fallback_date provided: {value}")
+
+        day, month = map(int, parts)
+
+        candidates = []
+        for year in (fallback_date.year - 1, fallback_date.year, fallback_date.year + 1):
+            try:
+                candidates.append(date(year, month, day))
+            except ValueError:
+                pass
+
+        if not candidates:
+            raise ValueError(f"Could not construct a valid date from: {value}")
+
+        final_date = min(candidates, key=lambda d: abs(d - fallback_date))
+        return final_date.isoformat()
+
+    raise ValueError(f"Invalid date format: {value}")
 
 
-def canonicalize_structured_reference(raw: str) -> str:
+def canonicalize_structured_ref(raw: str) -> str:
     digits = re.sub(r"\D", "", raw)
     if len(digits) != 12:
         raise ValueError("Invalid structured reference")
     return f"+++{digits[0:3]}/{digits[3:7]}/{digits[7:12]}+++"
 
 
-def normalize_name(value: str) -> str:
-    return re.sub(r"\s+", " ", value.upper()).strip()
-
-
-def extract_structured_message(value: str) -> str | None:
+def extract_structured_ref(value: str | None) -> str | None:
     if not value:
         return None
 
@@ -163,12 +80,12 @@ def extract_structured_message(value: str) -> str | None:
 
     # raw 12 digits
     if re.fullmatch(r"\d{12}", value):
-        return canonicalize_structured_reference(value)
+        return canonicalize_structured_ref(value)
 
     return None
 
 
-def normalize_for_message_compare(value: str) -> str:
+def normalize_for_comparison(value: str) -> str:
     value = unicodedata.normalize("NFD", value)
     value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
     return re.sub(r"\s+", "", value).upper()
@@ -179,16 +96,223 @@ def append_note_line(notes: str, step: str, role: str, source: str, value: str) 
     return f"{notes}\n{line}" if notes else line
 
 
-def normalize_for_name_compare(value: str) -> str:
-    return re.sub(r"\s+", "", value).upper()
-
-
 # ----------------------------------------------------------------------
 # Main normalize function
 # ----------------------------------------------------------------------
 
 
 def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
+
+    # ==================================================================
+    # PHASE 1 — EXTRACTION
+    # Pull all values out of the raw inputs into named variables.
+    # No decisions about the output schema here.
+    #
+    # details is parsed sequentially and destructively: each matched
+    # segment is removed from remaining_details so later patterns cannot match
+    # already-extracted content. The order is determined by parsing
+    # reliability, not by the output schema.
+    # ==================================================================
+
+    # -- Single purpose columns --
+    column_external_id = csv_row["external_id"]
+    column_amount = csv_row["amount"]
+    column_account_currency_code = csv_row["account_currency_code"]
+    column_asset_account_iban = csv_row["asset_account_iban"]
+    raw_opposing_account_iban = csv_row.get("opposing_account_iban", "").strip()
+    column_opposing_account_iban = parse_iban(
+        raw_opposing_account_iban, error_message=f"Invalid IBAN in tegenpartij column: '{raw_opposing_account_iban}'"
+    )
+    column_opposing_account_name = csv_row.get("opposing_account_name", "").strip()
+    column_description = csv_row.get("description", "").strip()
+    column_transaction_type = csv_row["transaction_type"]
+    column_primary_transaction_date = parse_ddmmyyyy(csv_row["primary_transaction_date"])
+    column_booking_date = parse_ddmmyyyy(csv_row["booking_date"])
+
+    # -- Multi purpose column: details --
+    remaining_details = csv_row.get("details", "")
+
+    # B1 — Details - Booking date = mandatory
+    RE_BOOKING_DATE = re.compile(r"VALUTADATUM\s*:\s*(\d{2}/\d{2}/\d{4})$")
+    match = RE_BOOKING_DATE.search(remaining_details)
+    if not match:
+        raise ValueError("Missing VALUTADATUM in details")
+    details_booking_date = parse_ddmmyyyy(match.group(1))
+    remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B2 — Details - Bank reference = optional
+    details_bank_reference = None
+    RE_BANK_REFERENCE = re.compile(r"BANKREFERENTIE\s*:\s*([0-9]+)")
+    match = RE_BANK_REFERENCE.search(remaining_details)
+    if match:
+        details_bank_reference = match.group(1)
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B3 — Details - Transaction processing date = optional
+    details_transaction_processing_date = None
+    RE_TRANSACTION_PROCESSING_DATE = re.compile(r"UITGEVOERD OP\s+(\d{2}/\d{2}(?:/\d{4})?)$")
+    match = RE_TRANSACTION_PROCESSING_DATE.search(remaining_details)
+    if match:
+        details_transaction_processing_date = parse_ddmmyyyy(
+            match.group(1), fallback_date_str=column_primary_transaction_date
+        )
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B4 — Details - Description = optional
+    details_description = None
+    RE_DESCRIPTION = re.compile(r"MEDEDELING\s*:\s*(.*)$")
+    match = RE_DESCRIPTION.search(remaining_details)
+    if match:
+        details_description = match.group(1).strip()
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B4a — Details - No description = optional
+    details_no_description = False
+    RE_NO_DESCRIPTION = re.compile(r"\bZONDER\s+MEDEDELING\b$")
+    match = RE_NO_DESCRIPTION.search(remaining_details)
+    if match:
+        details_no_description = True
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B5 — Details - Payment date = optional
+    details_payment_date = None
+    RE_PAYMENT_DATE = re.compile(r"(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}))?")
+    match = RE_PAYMENT_DATE.search(remaining_details)
+    if match:
+        details_payment_date = (
+            parse_ddmmyyyy(match.group(1), fallback_date_str=column_primary_transaction_date)
+            + " "
+            + (match.group(2) or "00:00")
+        )
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B6 — Details - Card network = optional
+    details_card_network = None
+    RE_CARD_NETWORK = re.compile(
+        r"(BANCONTACT(?: PAYCONIQ CO)?|VISA DEBIT)"
+        r"(?:\s*-\s*(CONTACTLOOS|eCommerce))?"
+    )
+    match = RE_CARD_NETWORK.search(remaining_details)
+    if match:
+        details_card_network = match.group(1)
+        if match.group(2):
+            details_card_network += f" ({match.group(2)})"
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B8 — Details - Payment channel = optional
+    details_payment_channel = None
+    RE_PAYMENT_CHANNEL = re.compile(r"(VIA MOBILE BANKING|VIA WEB BANKING|P2P MOBILE|MOBIELE BETALING)")
+    match = RE_PAYMENT_CHANNEL.search(remaining_details)
+    if match:
+        details_payment_channel = match.group(1)
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B7 — Details - Card container = optional
+    details_card_container = None
+    RE_CARD_NUMBER_CONTAINER = re.compile(
+        r"(BETALING MET DEBETKAART NUMMER|"
+        r"OP DE REKENING GEKOPPELD AAN DE DEBETKAART NUMMER)\s+([0-9X ]+)"
+    )
+    match = RE_CARD_NUMBER_CONTAINER.search(remaining_details)
+    if match:
+        details_card_container = match.group(0).strip()
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B9 — Details - Transaction type = optional
+    details_transaction_type = None
+    details_description_override = None  # MAANDELIJKSE BIJDRAGE tail → replaces description
+    RE_TRANSACTION_TYPE = re.compile(
+        r"\b(?:"
+        r"(STORTING)(?:\s+VAN\s+(.+))?"  # (1)=details_transaction_type, (2)=det_transaction_type_storting_van_tail
+        r"|"
+        r"(MAANDELIJKSE\s+BIJDRAGE)(?:\s+(.+))?"  # (3)=details_transaction_type, (4)=det_transaction_type_tail
+        r"|"
+        r"("
+        r"UW\s+DOORLOPENDE\s+OPDRACHT\s+TEN\s+GUNSTE\s+VAN\s+REKENING|"
+        r"WERO\s+OVERSCHRIJVING\s+IN\s+EURO|"
+        r"INSTANTOVERSCHRIJVING\s+IN\s+EURO|"
+        r"OVERSCHRIJVING\s+IN\s+EURO(?:\s+OP\s+REKENING|\s+VAN\s+REKENING)?|"
+        r"EUROPESE\s+DOMICILIERING|"
+        r"TERUGBETALING\s+WOONKREDIET(?:\s+[0-9\-]+)?"
+        r")"  # (5)=type
+        r")\b",
+        re.IGNORECASE,
+    )
+    match = RE_TRANSACTION_TYPE.search(remaining_details)
+    if match:
+        details_transaction_type = (match.group(1) or match.group(3) or match.group(5)).strip()
+        det_transaction_type_storting_van_tail = match.group(2).strip() if match.group(2) else None
+        det_transaction_type_tail = match.group(4).strip() if match.group(4) else None
+
+        if details_transaction_type.upper() == "STORTING" and det_transaction_type_storting_van_tail:
+            remaining_details = (
+                det_transaction_type_storting_van_tail  # remainder becomes Opposing account name info for B11
+            )
+        elif details_transaction_type.upper() == "MAANDELIJKSE BIJDRAGE" and det_transaction_type_tail:
+            details_description_override = det_transaction_type_tail
+            remaining_details = ""  # nothing further to extract
+        else:
+            remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B9a — Details - Transaction direction = removed (derived from amount)
+    RE_TRANSACTION_DIRECTION = re.compile(
+        r"\b("
+        r"OVERSCHRIJVING\s+IN\s+EURO\s+OP\s+REKENING|"
+        r"OVERSCHRIJVING\s+IN\s+EURO\s+VAN\s+REKENING|"
+        r"OPDRACHTGEVER\s+REKENING\s*:"
+        r")",
+        re.IGNORECASE,
+    )
+    match = RE_TRANSACTION_DIRECTION.search(remaining_details)
+    if match:
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B9b — Details - Technical reference = optional
+    details_technical_reference = None
+    RE_TECHNICAL_REFERENCE = re.compile(
+        r"\b("
+        r"UW\s+REFERTE\s*:\s*.+?|"
+        r"REFERTE\s+OPDRACHTGEVER\s*:\s*.+?|"
+        r"REFERTE\s*:\s*.+?"
+        r")(?=\s+(?:MANDAAT\s+NUMMER)\s*:|$)",
+        re.IGNORECASE,
+    )
+    match = RE_TECHNICAL_REFERENCE.search(remaining_details)
+    if match:
+        details_technical_reference = match.group(1).strip()
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B9c — Details - mandate reference = optional
+    details_mandate_reference = None
+    RE_MANDATE_REFERENCE = re.compile(r"\bMANDAAT\s+NUMMER\s*:\s*([A-Z0-9]+)\b")
+    match = RE_MANDATE_REFERENCE.search(remaining_details)
+    if match:
+        details_mandate_reference = match.group(1).strip()
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B10 — Details - IBAN + BIC = optional
+    details_opposing_account_iban = None
+    details_opposing_account_bic = None
+    RE_IBAN_BIC = re.compile(
+        r"\b([A-Z]{2}\s*\d{2}(?:\s*[A-Z0-9]){11,30})\s+BIC\s+([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b",
+        re.IGNORECASE,
+    )
+    match = RE_IBAN_BIC.search(remaining_details)
+    if match:
+        details_opposing_account_iban = parse_iban(match.group(1))
+        details_opposing_account_bic = match.group(2)
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
+
+    # B11 — Details - Opposing account name / address = optional
+    details_opposing_account_name = remaining_details.strip()
+
+    # ==================================================================
+    # PHASE 2 — WRITE
+    # Map extracted values to normalized output fields.
+    # All cross-source reconciliation and suppression logic lives here.
+    # No regex or string parsing; only decisions.
+    # ==================================================================
+
     normalized: dict[str, Any] = {
         "external_id": "",  # 1
         "primary_transaction_date": "",  # 2
@@ -205,382 +329,196 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         "notes": "",  # 13
     }
 
-    # ------------------------------------------------------------------
-    # NON-DETAILS COLUMNS
-    # ------------------------------------------------------------------
+    # external_id ← column_external_id
+    normalized["external_id"] = column_external_id
 
-    # A0 — CSV / external_id (bank_sequence_number)
-    normalized["external_id"] = csv_row["bank_sequence_number"]
+    # primary_transaction_date ← column_primary_transaction_date
+    normalized["primary_transaction_date"] = column_primary_transaction_date
 
-    # A1 — CSV / amount + currency
-    normalized["amount"] = csv_row["amount"].replace(",", ".").strip()
+    # transaction_processing_date ← details_transaction_processing_date (optional)
+    normalized["transaction_processing_date"] = details_transaction_processing_date or ""
 
-    if csv_row["currency"] != "EUR":
-        raise ValueError("Non-EUR account currency")
-    normalized["account_currency_code"] = "EUR"
-
-    # A2 — CSV / asset_account_iban
-    normalized["asset_account_iban"] = csv_row["account_iban"].replace(" ", "").upper()
-
-    # A3 — CSV / primary_transaction_date (execution_date)
-    execution_date = parse_ddmmyyyy(csv_row["execution_date"])
-    normalized["primary_transaction_date"] = execution_date
-
-    # A4 — CSV / booking_date (value_date)
-    booking_date = parse_ddmmyyyy(csv_row["value_date"])
-    normalized["booking_date"] = booking_date
-
-    # A6 — CSV / opposing_account_iban (if present)
-    csv_counterparty = csv_row.get("counterparty", "")
-    if is_iban(csv_counterparty):
-        normalized["opposing_account_iban"] = normalize_iban(csv_counterparty)
-
-    # A7 — CSV / opposing_account_name
-    normalized["opposing_account_name"] = csv_row.get("counterparty_name", "").strip()
-
-    # A8 — CSV / description (message)
-    message = csv_row.get("message", "").strip()
-
-    csv_structured = extract_structured_message(message)
-    if csv_structured:
-        normalized["description"] = csv_structured
-    else:
-        normalized["description"] = message
-
-    # ------------------------------------------------------------------
-    # DETAILS COLUMN
-    # ------------------------------------------------------------------
-
-    card_network = None
-    payment_channel = None
-    pending_b8_payment_channel = None
-    pending_b9_tx_norm = None
-
-    details_rest = csv_row.get("details_raw", "")
-
-    # B1 — Details - VALUTADATUM / booking_date
-    match = RE_BOOKING_DATE.search(details_rest)
-    if not match:
-        raise ValueError("Missing VALUTADATUM in details")
-
-    details_booking_date = parse_ddmmyyyy(match.group(1))
-    if details_booking_date != normalized["booking_date"]:
+    # booking_date ← column_booking_date &| details_booking_date (match)
+    if details_booking_date != column_booking_date:
         raise ValueError(
-            "Value date mismatch between CSV and details: "
-            f"csv_value_date='{normalized['booking_date']}' details_value_date='{details_booking_date}'"
+            "Value date mismatch between dedicated column and details: "
+            f"column_booking_date='{column_booking_date}' details_booking_date='{details_booking_date}'"
         )
+    normalized["booking_date"] = column_booking_date
 
-    details_rest = details_rest.replace(match.group(0), "").strip()
+    # payment_date ← details_payment_date (optional)
+    normalized["payment_date"] = details_payment_date or ""
 
-    # B2 — Details - BANKREFERENTIE / notes (optional; absent in old transactions)
-    match = RE_EXTERNAL_ID.search(details_rest)
-    if match:
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "B2",
-            "BANK REFERENCE",
-            "details",
-            match.group(1),
+    # amount ← column_amount
+    normalized["amount"] = column_amount.replace(",", ".").strip()
+
+    # account_currency_code ← column_account_currency_code
+    if column_account_currency_code != "EUR":
+        raise ValueError("Non-EUR account currency")
+    normalized["account_currency_code"] = column_account_currency_code
+
+    # asset_account_iban ← column_asset_account_iban
+    normalized["asset_account_iban"] = column_asset_account_iban.replace(" ", "").upper()
+
+    # opposing_account_iban ← details_opposing_account_iban &| details_opposing_account_iban (optional match)
+    if (
+        column_opposing_account_iban
+        and details_opposing_account_iban
+        and column_opposing_account_iban != details_opposing_account_iban
+    ):
+        raise ValueError(
+            "IBAN mismatch between CSV and details: "
+            f"column_opposing_account_iban='{column_opposing_account_iban}' "
+            f"details_opposing_account_iban='{details_opposing_account_iban}'"
         )
-        details_rest = details_rest.replace(match.group(0), "").strip()
+    normalized["opposing_account_iban"] = column_opposing_account_iban or details_opposing_account_iban or ""
 
-    # B3 — Details - UITGEVOERD OP / transaction_processing_date
-    match = RE_TRANSACTION_PROCESSING_DATE.search(details_rest)
-    if match:
-        normalized["transaction_processing_date"] = parse_ddmmyyyy(
-            match.group(1),
-            fallback_year=execution_date[:4],
-        )
-        details_rest = details_rest.replace(match.group(0), "").strip()
+    # opposing_account_bic ← details_opposing_account_bic
+    normalized["opposing_account_bic"] = details_opposing_account_bic or ""
 
-    # B4 — Details - MEDEDELING / description
-    match = RE_DESCRIPTION.search(details_rest)
-    if match:
-        details_mededeling = match.group(1).strip()
-
-        csv_description = normalized["description"]
-
-        csv_structured = extract_structured_message(csv_description)
-        details_structured = extract_structured_message(details_mededeling)
-
-        # --- Structured message handling (authoritative, single value) ---
-        if csv_structured or details_structured:
-            if csv_structured and details_structured:
-                if csv_structured != details_structured:
-                    raise ValueError(
-                        f"Structured message mismatch: csv='{csv_structured}' details='{details_structured}'"
-                    )
-                normalized["description"] = csv_structured
-            elif csv_structured:
-                normalized["description"] = csv_structured
-            else:
-                normalized["description"] = details_structured
-
-        # --- Non-structured message handling (CSV wins, details validates) ---
-        else:
-            if csv_description:
-                n_csv = normalize_for_message_compare(csv_description)
-                n_det = normalize_for_message_compare(details_mededeling)
-
-                if n_csv != n_det:
-                    raise ValueError(f"Mededeling mismatch: csv='{csv_description}' details='{details_mededeling}'")
-                # CSV version is authoritative → keep it
-            else:
-                normalized["description"] = details_mededeling
-
-        details_rest = details_rest.replace(match.group(0), "").strip()
-
-    # B4a — Details - No message indicator
-    match = RE_NO_DESCRIPTION.search(details_rest)
-    if match:
-        if normalized["description"]:
-            raise ValueError("ZONDER MEDEDELING present but MEDEDELING already extracted")
-        details_rest = details_rest.replace(match.group(0), "").strip()
-
-    # B5 — Details / payment_date
-    match = RE_PAYMENT_DATE_TIME.search(details_rest)
-    if match:
-        payment_date = parse_ddmmyyyy(
-            match.group(1),
-            fallback_year=execution_date[:4],
-        )
-        payment_time = match.group(2) or "00:00"
-        normalized["payment_date"] = f"{payment_date} {payment_time}"
-        details_rest = details_rest.replace(match.group(0), "").strip()
-
-    # B6 — Details - Card Network (capture)
-    match = RE_CARD_NETWORK.search(details_rest)
-    if match:
-        card_network = match.group(1)
-        if match.group(2):
-            card_network += f" ({match.group(2)})"
-        details_rest = details_rest.replace(match.group(0), "").strip()
-
-    # B8 — Details - Payment Channel (capture)
-    match = RE_PAYMENT_CHANNEL.search(details_rest)
-    if match:
-        payment_channel = match.group(1)
-        details_rest = details_rest.replace(match.group(0), "").strip()
-
-    # B7 — Details - Card Identifier
-    match = RE_CARD_NUMBER_CONTAINER.search(details_rest)
-    if match:
-        prefix = []
-        if card_network:
-            prefix.append(card_network)
-        if payment_channel:
-            prefix.append(payment_channel)
-
-        value = match.group(0).strip()
-        if prefix:
-            value = f"{' '.join(prefix)} {value}"
-
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "B7",
-            "CARD IDENTIFIER",
-            "details",
-            value,
-        )
-
-        details_rest = details_rest.replace(match.group(0), "").strip()
-    else:
-        if card_network:
-            normalized["notes"] = append_note_line(
-                normalized["notes"],
-                "B6",
-                "CARD NETWORK",
-                "details",
-                card_network,
-            )
-
-        pending_b8_payment_channel = payment_channel
-
-    # B9 — Details / notes - Transaction description
-    pending_b9_tx_norm = None
-
-    match = RE_TRANSACTION_TYPE.search(details_rest)
-    if match:
-        tx_type = (match.group(1) or match.group(3) or match.group(5)).strip()
-        van_tail = match.group(2).strip() if match.group(2) else None
-        free_tail = match.group(4).strip() if match.group(4) else None
-
-        csv_tx = normalize_for_message_compare(csv_row["transaction_type"])
-        b9_tx = normalize_for_message_compare(tx_type)
-
-        # Strip only explicitly allowed, semantically empty suffixes
-        for suffix in ("VAN REKENING", "NAAR REKENING", "OP REKENING"):
-            sfx = normalize_for_message_compare(suffix)
-            if b9_tx.endswith(sfx):
-                b9_tx = b9_tx[: -len(sfx)]
-                break
-
-        # Remember B9 for A5 decision
-        pending_b9_tx_norm = b9_tx
-
-        # Emit B9 only if it adds semantic information
-        if b9_tx != csv_tx:
-            normalized["notes"] = append_note_line(
-                normalized["notes"],
-                "B9",
-                "TRANSACTION TYPE",
-                "details",
-                tx_type,
-            )
-
-        # Special handling
-        if tx_type.upper() == "STORTING" and van_tail:
-            details_rest = van_tail
-
-        elif tx_type.upper() == "MAANDELIJKSE BIJDRAGE" and free_tail:
-            normalized["description"] = free_tail
-            details_rest = ""
-
-        else:
-            details_rest = details_rest.replace(match.group(0), "").strip()
-
-    # B9a — Details - Transaction direction (consume only, no note)
-    match = RE_TRANSACTION_DIRECTION.search(details_rest)
-    if match:
-        details_rest = details_rest.replace(match.group(0), "").strip()
-
-    # B9b — Details / notes - Technical references
-    match = RE_TECHNICAL_REFERENCE.search(details_rest)
-    if match:
-        technical_reference = match.group(1).strip()
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "B9b",
-            "TECHNICAL REFERENCE",
-            "details",
-            technical_reference,
-        )
-        details_rest = details_rest.replace(match.group(0), "").strip()
-
-    # B9c — Details / notes - Mandate reference
-    match = RE_MANDATE_REFERENCE.search(details_rest)
-    if match:
-        mandate_reference = match.group(1).strip()
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "B9c",
-            "MANDATE REFERENCE",
-            "details",
-            mandate_reference,
-        )
-        details_rest = details_rest.replace(match.group(0), "").strip()
-
-    # B10 — Details - IBAN BIC / opposing_account_iban ; opposing_account_bic
-    match = RE_IBAN_BIC.search(details_rest)
-    if match:
-        iban_norm = normalize_iban(match.group(1))
-        bic_raw = match.group(2)
-
-        if not is_iban(iban_norm):
-            raise ValueError(f"Invalid IBAN in details: '{match.group(1)}' -> '{iban_norm}'")
-
-        if normalized["opposing_account_iban"] and iban_norm != normalized["opposing_account_iban"]:
-            raise ValueError(
-                "IBAN mismatch between CSV and details: "
-                f"csv_iban='{normalized['opposing_account_iban']}' details_iban='{iban_norm}'"
-            )
-
-        normalized["opposing_account_iban"] = iban_norm
-        normalized["opposing_account_bic"] = bic_raw
-        details_rest = details_rest.replace(match.group(0), "").strip()
-
-    # B11 — Details / opposing_account_name
-    details_name = details_rest.strip()
-    csv_name = (normalized["opposing_account_name"] or "").strip()
-
-    final_name = ""
-
-    if csv_name:
-        if details_name:
-            n_csv = normalize_for_name_compare(csv_name)
-            n_det = normalize_for_name_compare(details_name)
-
-            if n_csv not in n_det:
-                raise ValueError(f"Counterparty name mismatch: csv='{csv_name}' details='{details_name}'")
-
-            # If details begins with the same name (ignoring caps/spaces),
-            # keep CSV casing + append the remaining tail (address etc.)
-            if n_det.startswith(n_csv):
-                # compute tail length in original string by using normalized lengths
-                tail_norm_len = len(n_det) - len(n_csv)
+    # opposing_account_name ← column_opposing_account_name &| details_opposing_account_name (append)
+    if column_opposing_account_name:
+        if details_opposing_account_name:
+            column_opposing_account_name_norm = normalize_for_comparison(column_opposing_account_name)
+            details_opposing_account_name_norm = normalize_for_comparison(details_opposing_account_name)
+            if column_opposing_account_name_norm not in details_opposing_account_name_norm:
+                raise ValueError(
+                    "Opposing account name mismatch: "
+                    f"column='{column_opposing_account_name}' "
+                    f"details='{details_opposing_account_name}'"
+                )
+            if details_opposing_account_name_norm.startswith(column_opposing_account_name_norm):
+                tail_norm_len = len(details_opposing_account_name_norm) - len(column_opposing_account_name_norm)
                 if tail_norm_len > 0:
-                    # rebuild tail by walking original details_name and consuming normalized chars
                     consumed = 0
                     cut_index = 0
-                    for i, ch in enumerate(details_name):
-                        if not ch.isspace():
+                    for index, char in enumerate(details_opposing_account_name):
+                        if not char.isspace():
                             consumed += 1
-                        if consumed >= len(n_csv):
-                            cut_index = i + 1
+                        if consumed >= len(column_opposing_account_name_norm):
+                            cut_index = index + 1
                             break
-                    tail = details_name[cut_index:].strip()
-                    final_name = f"{csv_name} {tail}".strip() if tail else csv_name
+                    details_opposing_account_name_tail = details_opposing_account_name[cut_index:].strip()
+                    normalized["opposing_account_name"] = (
+                        f"{column_opposing_account_name} {details_opposing_account_name_tail}".strip()
+                        if details_opposing_account_name_tail
+                        else column_opposing_account_name
+                    )
                 else:
-                    final_name = csv_name
+                    normalized["opposing_account_name"] = column_opposing_account_name
             else:
                 # details has extra leading words ("VAN ...") → keep CSV only (no safe splice)
-                final_name = csv_name
+                normalized["opposing_account_name"] = column_opposing_account_name
+        else:
+            normalized["opposing_account_name"] = column_opposing_account_name
     else:
-        final_name = details_name
+        normalized["opposing_account_name"] = details_opposing_account_name
 
-    normalized["opposing_account_name"] = final_name
+    # description ← details_description_override |
+    #               (column_description &| details_description &| column_structured_ref &| details_structured_ref)
+    # MAANDELIJKSE BIJDRAGE free tail overrides both when present
+    if details_description_override is not None:
+        normalized["description"] = details_description_override
+    else:
+        if details_no_description and (column_description or details_description):
+            raise ValueError("ZONDER MEDEDELING present but description found in a dedicated column or details column")
 
-    # A5 — CSV / transaction_type (final emit)
-    if not csv_row["transaction_type"]:
+        column_structured_ref = extract_structured_ref(column_description)
+        details_structured_ref = extract_structured_ref(details_description)
+
+        if column_structured_ref or details_structured_ref:
+            if column_structured_ref and details_structured_ref and column_structured_ref != details_structured_ref:
+                raise ValueError(
+                    f"Structured reference mismatch: csv='{column_structured_ref}' details='{details_structured_ref}'"
+                )
+            normalized["description"] = column_structured_ref or details_structured_ref
+        elif column_description:
+            if details_description:
+                if normalize_for_comparison(column_description) != normalize_for_comparison(details_description):
+                    raise ValueError(
+                        f"Mededeling mismatch: column='{column_description}' details='{details_description}'"
+                    )
+            normalized["description"] = column_description
+        else:
+            normalized["description"] = details_description or ""
+
+    # notes ← assembled from multiple sources
+    #
+    # Normalize transaction type strings once; used by B9, A5, and B8 decisions.
+    if not column_transaction_type:
         raise ValueError("Missing transaction type")
+    column_transaction_type_norm = normalize_for_comparison(column_transaction_type)
 
-    tx_type_norm = normalize_for_message_compare(csv_row["transaction_type"])
-    details_norm = normalize_for_message_compare(csv_row.get("details_raw", ""))
+    details_transaction_type_norm = None
+    if details_transaction_type:
+        details_transaction_type_norm = normalize_for_comparison(details_transaction_type)
+        for suffix in ("VAN REKENING", "NAAR REKENING", "OP REKENING"):
+            suffix_norm = normalize_for_comparison(suffix)
+            if details_transaction_type_norm.endswith(suffix_norm):
+                details_transaction_type_norm = details_transaction_type_norm[: -len(suffix_norm)]
+                break
 
-    suppress_a5 = False
+    notes = ""
 
-    # Regel 1 — kaartbetaling + debetkaart → A5 weg
-    if tx_type_norm == "KAARTBETALING" and "DEBETKAART" in details_norm:
-        suppress_a5 = True
+    # B2 — details_bank_reference
+    if details_bank_reference:
+        notes = append_note_line(notes, "B2", "BANK REFERENCE", "details", details_bank_reference)
 
-    # Regel 2 — B9 is een specifiekere verfijning van A5 → A5 weg
-    if pending_b9_tx_norm:
-        if pending_b9_tx_norm != tx_type_norm and tx_type_norm in pending_b9_tx_norm:
-            suppress_a5 = True
+    # B6 / B7 — details_card_network, details_payment_channel, details_card_container
+    # When a details_card_container was found, details_card_network + details_payment_channel are merged into B7
+    # When no details_card_container,
+    # details_card_network goes to B6 and details_payment_channel is available for B8/A5.
+    if details_card_container:
+        card_parts = [p for p in [details_card_network, details_payment_channel, details_card_container] if p]
+        notes = append_note_line(notes, "B7", "CARD IDENTIFIER", "details", " ".join(card_parts))
+    elif details_card_network:
+        notes = append_note_line(notes, "B6", "CARD NETWORK", "details", details_card_network)
 
-    append_channel_to_a5 = pending_b8_payment_channel and pending_b8_payment_channel.upper().startswith("VIA")
+    # B9 — transaction type from details (only when it adds info beyond CSV tx type)
+    if details_transaction_type and details_transaction_type_norm != column_transaction_type_norm:
+        notes = append_note_line(notes, "B9", "TRANSACTION TYPE", "details", details_transaction_type)
 
-    if not suppress_a5:
-        a5_value = csv_row["transaction_type"]
+    # B9b — details_technical_reference
+    if details_technical_reference:
+        notes = append_note_line(notes, "B9b", "TECHNICAL REFERENCE", "details", details_technical_reference)
 
-        if append_channel_to_a5:
-            a5_value = f"{a5_value} {pending_b8_payment_channel}"
+    # B9c — details_mandate_reference
+    if details_mandate_reference:
+        notes = append_note_line(notes, "B9c", "MANDATE REFERENCE", "details", details_mandate_reference)
 
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "A5",
-            "TRANSACTION TYPE",
-            "transaction_type",
-            a5_value,
+    # A5 — col_transaction_type_det_payment_channel
+    # Suppressed when: (1) card payment with debetkaart, or (2) B9 is a more specific form of A5.
+    # Payment channel appended to A5 when channel is present, no card container, and channel starts with VIA.
+    details_norm = normalize_for_comparison(csv_row.get("details", ""))
+    suppress_col_transaction_type_det_payment_channel = (
+        column_transaction_type_norm == "KAARTBETALING" and "DEBETKAART" in details_norm
+    ) or (
+        details_transaction_type_norm is not None
+        and details_transaction_type_norm != column_transaction_type_norm
+        and column_transaction_type_norm in details_transaction_type_norm
+    )
+
+    details_payment_channel_available = details_payment_channel is not None and details_card_container is None
+    append_det_payment_channel_to_col_transaction_type_det_payment_channel = (
+        details_payment_channel is not None
+        and details_card_container is None
+        and details_payment_channel.upper().startswith("VIA")
+    )
+
+    if not suppress_col_transaction_type_det_payment_channel:
+        col_transaction_type_det_payment_channel = column_transaction_type
+        if append_det_payment_channel_to_col_transaction_type_det_payment_channel:
+            col_transaction_type_det_payment_channel = (
+                f"{col_transaction_type_det_payment_channel} {details_payment_channel}"
+            )
+        notes = append_note_line(
+            notes, "A5", "TRANSACTION TYPE", "transaction_type", col_transaction_type_det_payment_channel
         )
 
-    # Emit B8 only if it was NOT merged into A5
-    if pending_b8_payment_channel and not append_channel_to_a5:
-        normalized["notes"] = append_note_line(
-            normalized["notes"],
-            "B8",
-            "PAYMENT CHANNEL",
-            "details",
-            pending_b8_payment_channel,
-        )
+    # B8 — details_payment_channel (only when not already merged into B7 or A5)
+    if details_payment_channel_available and not append_det_payment_channel_to_col_transaction_type_det_payment_channel:
+        notes = append_note_line(notes, "B8", "PAYMENT CHANNEL", "details", details_payment_channel or "")
 
-    # consume rest
-    details_rest = ""
-
-    # ------------------------------------------------------------------
-    # REST CHECK (FASE C)
-    # ------------------------------------------------------------------
-    if details_rest:
-        raise ValueError(f"Unprocessed details content: {details_rest}")
+    normalized["notes"] = notes
 
     return normalized
