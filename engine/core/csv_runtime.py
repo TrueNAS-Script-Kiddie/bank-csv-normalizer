@@ -31,8 +31,8 @@ def build_paths(
 
     Note:
     - duplicate_index_csv is a placeholder here.
-      The real bank-specific path is set later in process_csv.py
-      once the bank is known.
+      The real account-specific path is set later in process_csv.py
+      once the bank is detected and validated rows are available.
     """
 
     name_without_ext, _ = os.path.splitext(csv_filename)

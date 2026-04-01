@@ -8,7 +8,7 @@ ordered sequence. Each phase must succeed before the next begins:
 1. **Load** — encoding/delimiter auto-detection ([csv_runtime.py:74](../../engine/core/csv_runtime.py#L74))
 2. **Autodetect bank** — column-header matching against all YAML configs ([csv_validation.py:164](../../engine/core/csv_validation.py#L164))
 3. **Validate & map** — column remapping, filter rules, regex checks ([csv_validation.py:7](../../engine/core/csv_validation.py#L7))
-4. **Load dedup index** — bank-specific persistent CSV ([duplicate_index.py:31](../../engine/core/duplicate_index.py#L31))
+4. **Load dedup index** — account-specific persistent CSV ([duplicate_index.py:31](../../engine/core/duplicate_index.py#L31))
 5. **Per-row loop** — dedup check → normalize → write temp output ([process_csv.py:216](../../engine/process_csv.py#L216))
 6. **Outcome classification** — success / partial / all_failed / all_full_duplicates ([process_csv.py:278](../../engine/process_csv.py#L278))
 7. **Finalize** — single exit path; all file moves, index commit, email ([completion.py:74](../../engine/core/completion.py#L74))
@@ -66,21 +66,34 @@ Precedence rules in [engine/banks/fintro.py:188](../../engine/banks/fintro.py#L1
 - **Structured messages** (Belgian `+++xxx/xxxx/xxxxx+++` format) take priority
   over free-text when either source has one
 
-## 6. Sequential Regex Parsing of details
+## 6. Two-Phase normalize_row + Sequential details Parsing
 
-`normalize_row()` works through the `details` string destructively:
-each matched segment is stripped from `remaining_details` after extraction.
-If anything remains in `remaining_details`,
-it raises `ValueError("Unprocessed details content: ...")`.
+`normalize_row()` in [engine/banks/fintro.py](../../engine/banks/fintro.py) is split into two explicit phases:
 
-This makes the parser strict by default — unknown content is an error, not
-silently ignored. See [engine/banks/fintro.py:258](../../engine/banks/fintro.py#L258)–[engine/banks/fintro.py:580](../../engine/banks/fintro.py#L580).
+**Phase 1 — Extraction.** All values are pulled into named variables; no output is written yet.
+- *Pre-A steps*: individual dedicated columns are extracted from `csv_row` by key.
+- *A steps*: everything is extracted from the multi-purpose `details` column in two sub-passes:
+  1. Common, easy-to-detect postfixes (anchored with `$`) are stripped first: VALUTADATUM, BANKREFERENTIE, UITGEVOERD OP.
+  2. The remainder is matched by leading pattern (anchored with `^`) to identify the transaction type and extract all remaining fields.
+  Each matched segment is removed from `remaining_details`. Anything left at the end raises `ValueError`.
+
+**Phase 2 — Write.** Extracted variables are reconciled across sources and written to the `normalized` dict.
+No regex or string parsing; only decisions (cross-source comparison, suppression, assembly).
 
 ## 7. Stateful In-Memory + Persistent Dedup Index
 
-The dedup index is a `defaultdict[str, list[dict]]` loaded from a bank-specific
+The dedup index is a `defaultdict[str, list[dict]]` loaded from a per-account
 CSV at the start of each run. New rows are appended to the in-memory dict during
 the loop so that intra-batch duplicates are caught before the index is committed.
+
+The index file is named `<IBAN>-duplicate-index.csv` (e.g. `BE12345678901234-duplicate-index.csv`).
+Which column provides the partition value is configured in the YAML:
+```yaml
+duplicate_key:
+  columns: ["external_id"]
+  partition_by: "asset_account_iban"
+```
+If `partition_by` is absent, the index falls back to one file per bank name.
 
 Classification ([duplicate_index.py:173](../../engine/core/duplicate_index.py#L173)):
 - `new` — key not seen

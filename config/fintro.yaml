@@ -49,3 +49,4 @@ columns:
 
 duplicate_key:
   columns: ["external_id"]
+  partition_by: "asset_account_iban"

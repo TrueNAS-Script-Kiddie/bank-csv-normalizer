@@ -147,14 +147,6 @@ def main() -> None:
         bank_module = importlib.import_module(f"engine.banks.{bank_name}")
 
         # -----------------------------------------------------------------
-        # Set bank-specific duplicate-index path
-        # -----------------------------------------------------------------
-        paths["duplicate_index_csv"] = os.path.join(
-            paths["duplicate_index_dir"],
-            f"{bank_cfg['bank']}-duplicate-index.csv",
-        )
-
-        # -----------------------------------------------------------------
         # Validate + map + filter rows
         # -----------------------------------------------------------------
         validated_rows, column_map = validate_and_prepare(csv_rows, bank_cfg)
@@ -171,7 +163,30 @@ def main() -> None:
             return
 
         # -----------------------------------------------------------------
-        # Load duplicate index (bank-specific)
+        # Set account-specific duplicate-index path
+        # partition_by column value (e.g. asset_account_iban) determines
+        # which index file is used, so one index per account rather than
+        # one per bank.
+        # -----------------------------------------------------------------
+        partition_by = bank_cfg.get("duplicate_key", {}).get("partition_by")
+        if partition_by:
+            partition_value = validated_rows[0].get(partition_by, "").replace(" ", "").upper()
+            if not partition_value:
+                completion.finalize(
+                    context,
+                    exit_code=65,
+                    outcome="structure_failed",
+                    normalized_rows=None,
+                    message=f"DUPLICATE INDEX: partition_by column '{partition_by}' is empty in first row",
+                )
+                return
+            index_filename = f"{partition_value}-duplicate-index.csv"
+        else:
+            index_filename = f"{bank_cfg['bank']}-duplicate-index.csv"
+        paths["duplicate_index_csv"] = os.path.join(paths["duplicate_index_dir"], index_filename)
+
+        # -----------------------------------------------------------------
+        # Load duplicate index
         # -----------------------------------------------------------------
         duplicate_index = load_duplicate_index(paths["duplicate_index_csv"])
         log_event(

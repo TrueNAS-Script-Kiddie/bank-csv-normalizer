@@ -44,7 +44,7 @@ No build step. No package install needed beyond Python stdlib + `pyyaml`.
 
 ## Exit Codes
 
-Defined in [engine/process_csv.py:278-316](engine/process_csv.py#L278):
+Defined in [engine/process_csv.py](engine/process_csv.py) (outcome classification block):
 
 | Code | Outcome |
 |------|---------|
@@ -62,7 +62,7 @@ Defined in [engine/process_csv.py:278-316](engine/process_csv.py#L278):
 2. Create `engine/banks/<bank>.py` — implement `normalize_row(csv_row)`.
    See [engine/banks/fintro.py](engine/banks/fintro.py) as reference.
 3. No further code changes needed — `autodetect_bank()` loads all `config/*.yaml`
-   automatically ([engine/core/csv_runtime.py:175](engine/core/csv_runtime.py#L175)) and
+   automatically ([engine/core/csv_runtime.py](engine/core/csv_runtime.py#L175)) and
    `process_csv.py` imports the bank module dynamically after detection.
 
 ## Additional Documentation
