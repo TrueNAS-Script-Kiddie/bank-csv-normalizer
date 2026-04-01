@@ -382,19 +382,21 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_payment_date = match.group(3).strip() + " " + time_part
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
-    if details_match_type and remaining_details:
-        raise ValueError(
-            f"Regex match ({details_match_type}), but remaining_details be empty instead of '{remaining_details}'"
-        )
-    elif remaining_details and column_primary_transaction_date < "2018-09-01":
+    if remaining_details and column_primary_transaction_date < "2018-09-01":
+        details_match_type = "Old transaction"
         RE_CARDNUMBER = re.compile(r"[0-9]{4} [0-9X]{4} [0-9X]{4} [0-9]{4}(?: [0-9])?")
         match = RE_CARDNUMBER.search(remaining_details)
         if match:
             details_transaction_type = match.group(0).strip()
             remaining_details = remaining_details.replace(match.group(0), "").strip()
         details_opposing_account_name = remaining_details
+
+    if details_match_type and remaining_details:
+        raise ValueError(
+            f"Regex match ({details_match_type}), but remaining_details should be empty instead of '{remaining_details}'"  # noqa: E501
+        )
     elif remaining_details:
-        raise ValueError(f"remaining_details should have been empty by now: remaining_details='{remaining_details}'")
+        raise ValueError(f"remaining_details should be empty instead of'{remaining_details}'")
 
     # ==================================================================
     # PHASE 2 — WRITE
