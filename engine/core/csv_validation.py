@@ -64,8 +64,8 @@ def validate_and_prepare(
     # ----------------------------------------------------------------------
     validated_rows: list[dict[str, str]] = []
 
-    for raw_row in csv_rows:
-        mapped_row: dict[str, str] = {}
+    for source_line, raw_row in enumerate(csv_rows, start=2):  # start=2: row 1 is the header
+        mapped_row: dict[str, Any] = {}
 
         # Map CSV columns to internal names
         for internal_name, csv_name in column_map.items():
@@ -96,6 +96,8 @@ def validate_and_prepare(
                         f"value='{mapped_row[internal_name]}' regex='{cfg['regex']}'"
                     )
 
+        mapped_row["_source_line"] = source_line
+        mapped_row["_original_csv_row"] = raw_row
         validated_rows.append(mapped_row)
 
     return validated_rows, column_map

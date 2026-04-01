@@ -160,14 +160,6 @@ def main() -> None:
         validated_rows, column_map = validate_and_prepare(csv_rows, bank_cfg)
         log_event(logfile_path, f"Validated {len(validated_rows)} rows after filtering")
 
-        # Attach original CSV row for normalize-failed output
-        indexed_validated_rows: list[dict[str, Any]] = []
-        for idx, vrow in enumerate(validated_rows):
-            vrow["_original_csv_row"] = csv_rows[idx]
-            indexed_validated_rows.append(vrow)
-
-        validated_rows = indexed_validated_rows
-
         if not validated_rows:
             completion.finalize(
                 context,
@@ -216,7 +208,7 @@ def main() -> None:
         # -----------------------------------------------------------------
         # Row processing loop
         # -----------------------------------------------------------------
-        for row_index, row in enumerate(validated_rows, start=1):
+        for row in validated_rows:
             original_csv_row = row.get("_original_csv_row", row)
 
             # Extract duplicate key
@@ -262,7 +254,7 @@ def main() -> None:
                 )
                 log_event(
                     logfile_path,
-                    f"Normalize failed on row {row_index}: {exc}",
+                    f"Normalize failed on source row {row.get('_source_line', '?')}: {exc}",
                 )
                 continue
 
