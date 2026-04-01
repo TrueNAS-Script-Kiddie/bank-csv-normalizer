@@ -147,8 +147,9 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # A1 — details_booking_date = mandatory
     RE_BOOKING_DATE = re.compile(r"VALUTADATUM\s*:\s*(\d{2}/\d{2}/\d{4})$")
     match = RE_BOOKING_DATE.search(remaining_details)
-    details_booking_date = parse_ddmmyyyy(match.group(1))
-    remaining_details = remaining_details.replace(match.group(0), "").strip()
+    if match:
+        details_booking_date = parse_ddmmyyyy(match.group(1))
+        remaining_details = remaining_details.replace(match.group(0), "").strip()
 
     # A2 — details_bank_reference = optional
     RE_BANK_REFERENCE = re.compile(r"BANKREFERENTIE\s*:\s*([0-9]+)$")
@@ -177,7 +178,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         r"^(UITBETALING VAN UW BONUS 2024)(?: UW TROUW WORDT BELOOND ZIE BIJLAGE VOOR DETAILS)"
         # group 4: details_description
         r"|"
-        r"^(NETTO INTERESTEN)(?:\s?\:\s?DETAILS ZIE BIJLAGE)"
+        r"^(NETTO INTERESTEN)(?:\s?\:\s?DETAILS ZIE BIJLAGE)"  # group 5: details_description
     )
     match = RE_DESCRIPTION.search(remaining_details)
     if match:
@@ -254,10 +255,10 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # A8 — OVERSCHRIJVING
     RE_OVERSCHRIJVING = re.compile(
         r"^"
-        r"(WERO |INSTANT)?"  # group 1: details_transaction_type prefix
+        r"(WERO |INSTANT(?:OVER)?|EUROPESE )?"  # group 1: details_transaction_type prefix
         r"(OVERSCHRIJVING)"  # group 2: details_transaction_type core
-        r"( IN EURO)"  # group 3: drop
-        r"( OP REKENING| VAN REKENING)?"  # group 4: drop
+        r"( IN EURO)?"  # group 3: drop
+        r"( OP REKENING| VAN REKENING| NAAR)?"  # group 4: drop
         r"(.*?)"  # group 5: details_opposing_account_iban/bic/name (part 1)
         r"( VIA WEB BANKING| VIA MOBILE BANKING)?"  # group 6: details_transaction_type via
         r"(.*?)"  # group 7: details_opposing_account_iban/bic/name (part 2)
@@ -293,7 +294,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # A9 — BETALING MET DEBETKAART
     RE_BETALING = re.compile(
         r"^"
-        r"((?:TERUG)?BETALING MET DEBETKAART(?: NUMMER)? [0-9X ]{16-21})"  # group 1: details_transaction_type (part 2)
+        r"((?:TERUG)?BETALING MET DEBETKAART(?: NUMMER)? [0-9X ]{16,21})"  # group 1: details_transaction_type (part 2)
         r"( BANCONTACT PAYCONIQ CO)?"  # group 2: details_transaction_type (part 1 primary)
         r"(.*)"  # group 3: details_opposing_account_name
         r"( P2P MOBILE)?"  # group 4: details_transaction_type (part 1 primary)
@@ -350,18 +351,19 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # A11 — GELDOPNEMING
     RE_GELDOPNEMING = re.compile(
         r"^"
-        r"(GELDOPNEMING IN EURO(?: AAN ANDERE AUTOMATEN)? MET DEBETKAART NUMMER [0-9X ]{19})"
-        # group 1: transaction_type (part 2)
+        r"(GELDOPN(?:EMING|AME)(?: IN EURO)?"
+        r"(?: AAN (?:ANDERE|ONZE) AUTOMATEN(?: BE)?)?"
+        r" MET (?:DEBETKAART NUMMER|KAART) [0-9X ]{16,21})"  # group 1: transaction_type (part 2)
         r"(.*)"  # group 2: details_opposing_account_name
         r"( [0-9]{2}/[0-9]{2}/[0-9]{4})"  # group 3: details_payment_date
         r"( [0-9]{2}:[0-9]{2}| [0-9]{2} U [0-9]{2})?"  # group 4: details_payment_date (time)
-        r"( BANCONTACT| VISA DEBIT)"  # group 5: transaction_type (part 1)
+        r"( BANCONTACT| VISA DEBIT)?"  # group 5: transaction_type (part 1) — absent in older transactions
         r"$",
         re.IGNORECASE,
     )
     match = RE_GELDOPNEMING.search(remaining_details)
     if match:
-        details_transaction_type = match.group(5).strip() + " " + match.group(1).strip()
+        details_transaction_type = ((match.group(5) or "").strip() + " " + match.group(1).strip()).strip()
         details_opposing_account_name = match.group(2).strip()
         time_part = ((match.group(4) or "").replace(" U ", ":") or "00:00").strip()
         details_payment_date = match.group(3).strip() + " " + time_part
