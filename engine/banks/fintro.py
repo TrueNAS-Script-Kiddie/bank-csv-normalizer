@@ -132,6 +132,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # -- Multi purpose column: details --
     remaining_details = csv_row.get("details", "")
 
+    details_booking_date = None
     details_bank_reference = None
     details_transaction_processing_date = None
     details_description = None
@@ -146,8 +147,6 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # A1 — details_booking_date = mandatory
     RE_BOOKING_DATE = re.compile(r"VALUTADATUM\s*:\s*(\d{2}/\d{2}/\d{4})$")
     match = RE_BOOKING_DATE.search(remaining_details)
-    if not match:
-        raise ValueError("Missing VALUTADATUM in details")
     details_booking_date = parse_ddmmyyyy(match.group(1))
     remaining_details = remaining_details.replace(match.group(0), "").strip()
 
@@ -174,10 +173,17 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         r"^(TERUGBETALING\s+WOONKREDIET(?:\s+[0-9\-]+)?)"  # group 2: details_description
         r"|"
         r"^(MAANDELIJKSE\s+BIJDRAGE(?:\s+.+)?)"  # group 3: details_description
+        r"|"
+        r"^(UITBETALING VAN UW BONUS 2024)(?: UW TROUW WORDT BELOOND ZIE BIJLAGE VOOR DETAILS)"
+        # group 4: details_description
+        r"|"
+        r"^(NETTO INTERESTEN)(?:\s?\:\s?DETAILS ZIE BIJLAGE)"
     )
     match = RE_DESCRIPTION.search(remaining_details)
     if match:
-        details_description = (match.group(1) or match.group(2) or match.group(3)).strip()
+        details_description = (
+            match.group(1) or match.group(2) or match.group(3) or match.group(4) or match.group(5)
+        ).strip()
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
     # A4a — Details - No description = optional
@@ -287,7 +293,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # A9 — BETALING MET DEBETKAART
     RE_BETALING = re.compile(
         r"^"
-        r"((?:TERUG)?BETALING MET DEBETKAART(?: NUMMER)? [0-9X ]{19})"  # group 1: details_transaction_type (part 2)
+        r"((?:TERUG)?BETALING MET DEBETKAART(?: NUMMER)? [0-9X ]{16-21})"  # group 1: details_transaction_type (part 2)
         r"( BANCONTACT PAYCONIQ CO)?"  # group 2: details_transaction_type (part 1 primary)
         r"(.*)"  # group 3: details_opposing_account_name
         r"( P2P MOBILE)?"  # group 4: details_transaction_type (part 1 primary)
@@ -295,7 +301,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         r"( OM)?"  # group 6: drop
         r"( [0-9]{2}:[0-9]{2}| [0-9]{2} U [0-9]{2})?"  # group 7: details_payment_date (time)
         r"(.*?)"  # group 8: details_exchange_and_transaction_costs (optional free text)
-        r"( BANCONTACT| VISA DEBIT - CONTACTLOOS| VISA DEBIT - eCommerce| VISA DEBIT)"
+        r"( BANCONTACT| VISA DEBIT - CONTACTLOOS| VISA DEBIT - eCommerce| VISA DEBIT)?"
         # group 9: details_transaction_type (part 1 secondary)
         r"$",
         re.IGNORECASE,
@@ -303,7 +309,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     match = RE_BETALING.search(remaining_details)
     if match:
         details_transaction_type = (
-            ((match.group(2) or "").replace(" CO", "").strip() or match.group(9).strip())
+            ((match.group(2) or "").replace(" CO", "").strip() or (match.group(9) or "").strip())
             + " "
             + (match.group(4) or "").strip()
             + " "
@@ -489,8 +495,14 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     elif column_description:
         if details_description:
             if normalize_for_comparison(column_description) != normalize_for_comparison(details_description):
-                raise ValueError(f"Mededeling mismatch: column='{column_description}' details='{details_description}'")
-        normalized["description"] = column_description
+                if "NETTO INTERESTEN" in details_description:
+                    normalized["description"] = details_description + ": " + column_description
+                else:
+                    raise ValueError(
+                        f"Mededeling mismatch: column='{column_description}' details='{details_description}'"
+                    )
+        else:
+            normalized["description"] = column_description
     else:
         normalized["description"] = details_description or ""
 
