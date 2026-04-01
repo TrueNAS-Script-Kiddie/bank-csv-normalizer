@@ -144,6 +144,8 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     details_technical_reference = None
     details_exchange_and_transaction_costs = None
 
+    details_match_type = None
+
     # A1 — details_booking_date = mandatory
     RE_BOOKING_DATE = re.compile(r"VALUTADATUM\s*:\s*(\d{2}/\d{2}/\d{4})$")
     match = RE_BOOKING_DATE.search(remaining_details)
@@ -182,6 +184,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     )
     match = RE_DESCRIPTION.search(remaining_details)
     if match:
+        details_match_type = "Description"
         details_description = (
             match.group(1) or match.group(2) or match.group(3) or match.group(4) or match.group(5)
         ).strip()
@@ -192,6 +195,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     RE_NO_DESCRIPTION = re.compile(r"\bZONDER\s+MEDEDELING\b$")
     match = RE_NO_DESCRIPTION.search(remaining_details)
     if match:
+        details_match_type = "No description"
         details_no_description = True
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
@@ -206,6 +210,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     )
     match = RE_STORTING.search(remaining_details)
     if match:
+        details_match_type = "Storting"
         details_opposing_account_name = match.group(3).strip()
         details_payment_date = match.group(6).strip()
         details_transaction_type = match.group(1) + match.group(4) + match.group(5)
@@ -220,6 +225,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     )
     match = RE_DOORLOPENDE_OPDRACHT.search(remaining_details)
     if match:
+        details_match_type = "Doorlopende opdracht"
         details_transaction_type = match.group(2).strip()
         rest = match.group(4).strip()
         RE_IBAN_BIC = re.compile(
@@ -247,6 +253,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     )
     match = RE_DOMICILIERING.search(remaining_details)
     if match:
+        details_match_type = "Domiciliering"
         details_transaction_type = ((match.group(1) or "") + match.group(2)).strip()
         details_opposing_account_name = match.group(4).strip()
         details_technical_reference = (match.group(5) + match.group(6) + match.group(7) + match.group(8)).strip()
@@ -269,6 +276,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     )
     match = RE_OVERSCHRIJVING.search(remaining_details)
     if match:
+        details_match_type = "Overschrijving"
         # details_transaction_type
         prefix = (match.group(1) or "").strip()
         core = match.group(2).strip()
@@ -294,7 +302,8 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # A9 — BETALING MET DEBETKAART
     RE_BETALING = re.compile(
         r"^"
-        r"((?:TERUG)?BETALING MET DEBETKAART(?: NUMMER)? [0-9X ]{16,21})"  # group 1: details_transaction_type (part 2)
+        r"((?:TERUG)?BETALING MET DEBETKAART(?: NUMMER)? [0-9]{4} [0-9X]{4} [0-9X]{4} [0-9]{4}(?: [0-9])?)"
+        # group 1: details_transaction_type (part 2)
         r"( BANCONTACT PAYCONIQ CO)?"  # group 2: details_transaction_type (part 1 primary)
         r"(.*)"  # group 3: details_opposing_account_name
         r"( P2P MOBILE)?"  # group 4: details_transaction_type (part 1 primary)
@@ -309,6 +318,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     )
     match = RE_BETALING.search(remaining_details)
     if match:
+        details_match_type = "Betaling"
         details_transaction_type = (
             ((match.group(2) or "").replace(" CO", "").strip() or (match.group(9) or "").strip())
             + " "
@@ -334,6 +344,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     )
     match = RE_MOBIELE_BETALING.search(remaining_details)
     if match:
+        details_match_type = "Mobiele betaling"
         details_transaction_type = match.group(4).strip() + " " + match.group(1).strip()
         rest = match.group(3).strip()
         RE_IBAN_BIC = re.compile(
@@ -353,7 +364,8 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         r"^"
         r"(GELDOPN(?:EMING|AME)(?: IN EURO)?"
         r"(?: AAN (?:ANDERE|ONZE) AUTOMATEN(?: BE)?)?"
-        r" MET (?:DEBETKAART NUMMER|KAART) [0-9X ]{16,21})"  # group 1: transaction_type (part 2)
+        r" MET (?:DEBETKAART NUMMER|KAART) [0-9]{4} [0-9X]{4} [0-9X]{4} [0-9]{4}(?: [0-9])?)"
+        # group 1: transaction_type (part 2)
         r"(.*)"  # group 2: details_opposing_account_name
         r"( [0-9]{2}/[0-9]{2}/[0-9]{4})"  # group 3: details_payment_date
         r"( [0-9]{2}:[0-9]{2}| [0-9]{2} U [0-9]{2})?"  # group 4: details_payment_date (time)
@@ -363,13 +375,25 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     )
     match = RE_GELDOPNEMING.search(remaining_details)
     if match:
+        details_match_type = "Geldopneming"
         details_transaction_type = ((match.group(5) or "").strip() + " " + match.group(1).strip()).strip()
         details_opposing_account_name = match.group(2).strip()
         time_part = ((match.group(4) or "").replace(" U ", ":") or "00:00").strip()
         details_payment_date = match.group(3).strip() + " " + time_part
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
-    if remaining_details:
+    if details_match_type and remaining_details:
+        raise ValueError(
+            f"Regex match ({details_match_type}), but remaining_details be empty instead of '{remaining_details}'"
+        )
+    elif remaining_details and column_primary_transaction_date < "2018-09-01":
+        RE_CARDNUMBER = re.compile(r"[0-9]{4} [0-9X]{4} [0-9X]{4} [0-9]{4}(?: [0-9])?")
+        match = RE_CARDNUMBER.search(remaining_details)
+        if match:
+            details_transaction_type = match.group(0).strip()
+            remaining_details = remaining_details.replace(match.group(0), "").strip()
+        details_opposing_account_name = remaining_details
+    elif remaining_details:
         raise ValueError(f"remaining_details should have been empty by now: remaining_details='{remaining_details}'")
 
     # ==================================================================
@@ -405,7 +429,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     normalized["transaction_processing_date"] = details_transaction_processing_date or ""
 
     # booking_date ← column_booking_date &| details_booking_date (match)
-    if details_booking_date != column_booking_date:
+    if details_booking_date and details_booking_date != column_booking_date:
         raise ValueError(
             "Value date mismatch between dedicated column and details: "
             f"column_booking_date='{column_booking_date}' details_booking_date='{details_booking_date}'"
