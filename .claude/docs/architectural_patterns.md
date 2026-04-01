@@ -56,8 +56,8 @@ See [csv_runtime.py:137](../../engine/core/csv_runtime.py#L137) and [process_csv
 
 ## 5. Two-Source Data Reconciliation
 
-For every field that appears in both CSV columns and the free-text `details`
-column, the normalizer compares both sources and raises `ValueError` on mismatch.
+For every field that appears in both a dedicated column and multi-purpose `details` 
+column, the normalizer compares both sources and raises `ValueError` on mismatch or appends both values to the normalized row.
 Neither source is blindly trusted.
 
 Precedence rules in [engine/banks/fintro.py:188](../../engine/banks/fintro.py#L188):
@@ -70,14 +70,11 @@ Precedence rules in [engine/banks/fintro.py:188](../../engine/banks/fintro.py#L1
 
 `normalize_row()` works through the `details` string destructively:
 each matched segment is stripped from `remaining_details` after extraction.
-Steps are labeled B1–B11. If anything remains in `remaining_details` at phase C,
+If anything remains in `remaining_details`,
 it raises `ValueError("Unprocessed details content: ...")`.
 
 This makes the parser strict by default — unknown content is an error, not
 silently ignored. See [engine/banks/fintro.py:258](../../engine/banks/fintro.py#L258)–[engine/banks/fintro.py:580](../../engine/banks/fintro.py#L580).
-
-All regex patterns are module-level compiled constants (`RE_*`) at the top of
-[engine/banks/fintro.py:9](../../engine/banks/fintro.py#L9).
 
 ## 7. Stateful In-Memory + Persistent Dedup Index
 
