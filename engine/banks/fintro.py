@@ -180,13 +180,24 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         r"^(UITBETALING VAN UW BONUS 2024)(?: UW TROUW WORDT BELOOND ZIE BIJLAGE VOOR DETAILS)"
         # group 4: details_description
         r"|"
-        r"^(NETTO INTERESTEN)(?:\s?\:\s?DETAILS ZIE BIJLAGE)"  # group 5: details_description
+        r"^(NETTO INTERESTEN)(?:\s?\:\s?DETAILS ZIE BIJLAGE)?"  # group 5: details_description
+        r"|"
+        r"^((?:MAANDELIJKSE )?EQUIPERINGSKOSTEN VOOR DE PERIODE .+?)(?:\s+DETAILS ZIE BIJLAGE)?$"
+        # group 6: fee description
+        r"|"
+        r"^(GEBRUIKSKOSTEN VOOR DE PERIODE .+?)(?:\s+DETAILS ZIE BIJLAGE)?$"  # group 7: fee description
     )
     match = RE_DESCRIPTION.search(remaining_details)
     if match:
         details_match_type = "Description"
         details_description = (
-            match.group(1) or match.group(2) or match.group(3) or match.group(4) or match.group(5)
+            match.group(1)
+            or match.group(2)
+            or match.group(3)
+            or match.group(4)
+            or match.group(5)
+            or match.group(6)
+            or match.group(7)
         ).strip()
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
@@ -302,7 +313,8 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # A9 — BETALING MET DEBETKAART
     RE_BETALING = re.compile(
         r"^"
-        r"((?:TERUG)?BETALING MET DEBETKAART(?: NUMMER)? [0-9]{4} [0-9X]{4} [0-9X]{4} [0-9]{4}(?: [0-9])?)"
+        r"((?:TERUG)?BETALING MET (?:DEBETKAART(?: NUMMER)?|BANKKAART MET KAART)"
+        r" [0-9]{4} [0-9X]{4} [0-9X]{4} [0-9X]{4}(?: [0-9X])?)"
         # group 1: details_transaction_type (part 2)
         r"( BANCONTACT PAYCONIQ CO)?"  # group 2: details_transaction_type (part 1 primary)
         r"(.*)"  # group 3: details_opposing_account_name
@@ -364,7 +376,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         r"^"
         r"(GELDOPN(?:EMING|AME)(?: IN EURO)?"
         r"(?: AAN (?:ANDERE|ONZE) AUTOMATEN(?: BE)?)?"
-        r" MET (?:DEBETKAART NUMMER|KAART) [0-9]{4} [0-9X]{4} [0-9X]{4} [0-9]{4}(?: [0-9])?)"
+        r" MET (?:DEBETKAART NUMMER|KAART) [0-9]{4} [0-9X]{4} [0-9X]{4} [0-9X]{4}(?: [0-9X])?)"
         # group 1: transaction_type (part 2)
         r"(.*)"  # group 2: details_opposing_account_name
         r"( [0-9]{2}/[0-9]{2}/[0-9]{4})"  # group 3: details_payment_date
@@ -384,12 +396,13 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
 
     if remaining_details and column_primary_transaction_date < "2018-09-01":
         details_match_type = "Old transaction"
-        RE_CARDNUMBER = re.compile(r"[0-9]{4} [0-9X]{4} [0-9X]{4} [0-9]{4}(?: [0-9])?")
+        RE_CARDNUMBER = re.compile(r"[0-9]{4} [0-9X]{4} [0-9X]{4} [0-9X]{4}(?: [0-9X])?")
         match = RE_CARDNUMBER.search(remaining_details)
         if match:
             details_transaction_type = match.group(0).strip()
             remaining_details = remaining_details.replace(match.group(0), "").strip()
         details_opposing_account_name = remaining_details
+        remaining_details = None
 
     if details_match_type and remaining_details:
         raise ValueError(
