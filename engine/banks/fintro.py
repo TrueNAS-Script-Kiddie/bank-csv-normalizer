@@ -233,9 +233,9 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         r"( VAN )"  # group 3: drop
         r"(.+?)"  # group 4: details_opposing_account_name
         r"( MANDAAT NUMMER : )"  # group 5: details_technical_reference fixed
-        r"([A-Z0-9]+)"  # group 6: details_technical_reference mandate number
+        r"([A-Z0-9\-]+)"  # group 6: details_technical_reference mandate number
         r"( REFERTE : )"  # group 7: details_technical_reference fixed
-        r"([A-Z0-9]+)$"  # group 8: details_technical_reference reference
+        r"([A-Z0-9][A-Z0-9\-\/]*)$"  # group 8: details_technical_reference reference
     )
     match = RE_DOMICILIERING.search(remaining_details)
     if match:
@@ -247,17 +247,16 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # A8 — OVERSCHRIJVING
     RE_OVERSCHRIJVING = re.compile(
         r"^"
-        r"(WERO|INSTANT )?"  # group 1: details_transaction_type prefix
+        r"(WERO |INSTANT)?"  # group 1: details_transaction_type prefix
         r"(OVERSCHRIJVING)"  # group 2: details_transaction_type core
         r"( IN EURO)"  # group 3: drop
         r"( OP REKENING| VAN REKENING)?"  # group 4: drop
-        r"(.*?)(?= VIA WEB BANKING| VIA MOBILE BANKING| REFERTE OPDRACHTGEVER| UW REFERTE)"
-        # group 5: details_opposing_account_iban/bic/name (part 1)
+        r"(.*?)"  # group 5: details_opposing_account_iban/bic/name (part 1)
         r"( VIA WEB BANKING| VIA MOBILE BANKING)?"  # group 6: details_transaction_type via
-        r"(.*?)(?= REFERTE OPDRACHTGEVER| UW REFERTE)"  # group 7: details_opposing_account_iban/bic/name (part 2)
-        r"( REFERTE OPDRACHTGEVER| UW REFERTE)?"  # group 8: details_technical_reference label
+        r"(.*?)"  # group 7: details_opposing_account_iban/bic/name (part 2)
+        r"(?:( REFERTE OPDRACHTGEVER| UW REFERTE)"  # group 8: details_technical_reference label
         r"( : )"  # group 9: drop
-        r"(.*?)$",  # group 10: details_technical_reference value
+        r"(.*?))?$",  # group 10: details_technical_reference value
         re.IGNORECASE,
     )
     match = RE_OVERSCHRIJVING.search(remaining_details)
