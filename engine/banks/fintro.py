@@ -313,7 +313,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # A9 — BETALING MET DEBETKAART
     RE_BETALING = re.compile(
         r"^"
-        r"((?:TERUG)?BETALING MET (?:DEBETKAART(?: NUMMER)?|BANKKAART MET KAART)"
+        r"((?:TERUG)?BETALING MET (?:DEBET\s?KAART(?: NUMMER)?|BANKKAART MET KAART)"
         r" [0-9]{4} [0-9X]{4} [0-9X]{4} [0-9X]{4}(?: [0-9X])?)"
         # group 1: details_transaction_type (part 2)
         r"( BANCONTACT PAYCONIQ CO)?"  # group 2: details_transaction_type (part 1 primary)
