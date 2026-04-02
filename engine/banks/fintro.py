@@ -91,8 +91,8 @@ def normalize_for_comparison(value: str) -> str:
     return re.sub(r"\s+", "", value).upper()
 
 
-def append_note_line(notes: str, step: str, role: str, source: str, value: str) -> str:
-    line = f"{step}) {role} ({source}): {value}"
+def append_note_line(notes: str, source: str, value: str) -> str:
+    line = f"{source}: {value}"
     return f"{notes}\n{line}" if notes else line
 
 
@@ -146,21 +146,21 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
 
     details_match_type = None
 
-    # A1 — details_booking_date = mandatory
+    # A1 — Postfix: VALUTADATUM
     RE_BOOKING_DATE = re.compile(r"VALUTADATUM\s*:\s*(\d{2}/\d{2}/\d{4})$")
     match = RE_BOOKING_DATE.search(remaining_details)
     if match:
         details_booking_date = parse_ddmmyyyy(match.group(1))
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
-    # A2 — details_bank_reference = optional
+    # A2 — Postfix: BANKREFERENTIE
     RE_BANK_REFERENCE = re.compile(r"BANKREFERENTIE\s*:\s*([0-9]+)$")
     match = RE_BANK_REFERENCE.search(remaining_details)
     if match:
         details_bank_reference = match.group(1)
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
-    # A3 — details_transaction_processing_date = optional
+    # A3 — Postfix: UITGEVOERD OP
     RE_TRANSACTION_PROCESSING_DATE = re.compile(r"UITGEVOERD OP\s+(\d{2}/\d{2}(?:/\d{4})?)$")
     match = RE_TRANSACTION_PROCESSING_DATE.search(remaining_details)
     if match:
@@ -169,7 +169,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         )
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
-    # A4 — details_description = optional
+    # A4 — details_description
     RE_DESCRIPTION = re.compile(
         r"MEDEDELING\s*:\s*(.*)$"  # group 1: details_description
         r"|"
@@ -207,7 +207,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         ).strip()
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
-    # A4a — Details - No description = optional
+    # A4a — details_no_description
     details_no_description = False
     RE_NO_DESCRIPTION = re.compile(r"\bZONDER\s+MEDEDELING\b$")
     match = RE_NO_DESCRIPTION.search(remaining_details)
@@ -216,7 +216,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_no_description = True
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
-    # A5 — details_transaction_type + details_opposing_account_name + details_payment_date = optional
+    # A5 — STORTING
     RE_STORTING = re.compile(
         r"^(STORTING)"  # group 1: details_transaction_type
         r"( VAN )"  # group 2: drop
@@ -233,7 +233,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_transaction_type = match.group(1) + match.group(4) + match.group(5)
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
-    # A6 — details_transaction_type + details_opposing_account_iban/bic/name
+    # A6 — DOORLOPENDE OPDRACHT
     RE_DOORLOPENDE_OPDRACHT = re.compile(
         r"^(UW )"  # group 1: drop
         r"(DOORLOPENDE OPDRACHT)"  # group 2: details_transaction_type
@@ -402,6 +402,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_payment_date = match.group(3).strip() + " " + time_part
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
+    # A12 - Old transactions
     if remaining_details and column_primary_transaction_date < "2018-09-01":
         details_match_type = "Old transaction"
         RE_CARDNUMBER = re.compile(r"[0-9]{4} [0-9X]{4} [0-9X]{4} [0-9X]{4}(?: [0-9X])?")
@@ -412,6 +413,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_opposing_account_name = remaining_details
         remaining_details = None
 
+    # Remaining details
     if remaining_details and remaining_details not in (details_description or ""):
         if details_match_type:
             raise ValueError(
@@ -521,7 +523,6 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
                 else:
                     normalized["opposing_account_name"] = column_opposing_account_name
             else:
-                # details has extra leading words ("VAN ...") → keep CSV only (no safe splice)
                 normalized["opposing_account_name"] = column_opposing_account_name
         else:
             normalized["opposing_account_name"] = column_opposing_account_name
@@ -531,10 +532,8 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # description ← column_description &| details_description &| column_structured_ref &| details_structured_ref
     if details_no_description and (column_description or details_description):
         raise ValueError("ZONDER MEDEDELING present but description found in a dedicated column or details column")
-
     column_structured_ref = extract_structured_ref(column_description)
     details_structured_ref = extract_structured_ref(details_description)
-
     if column_structured_ref or details_structured_ref:
         if column_structured_ref and details_structured_ref and column_structured_ref != details_structured_ref:
             raise ValueError(
@@ -557,24 +556,27 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # notes ← assembled from multiple sources
     notes = ""
 
-    # B2 — details_bank_reference
+    # notes — details_bank_reference
     if details_bank_reference:
-        notes = append_note_line(notes, "B2", "BANK REFERENCE", "details", details_bank_reference)
+        notes = append_note_line(notes, "details_bank_reference", details_bank_reference)
 
-    # B9b — details_technical_reference
+    # notes — details_technical_reference
     if details_technical_reference:
-        notes = append_note_line(notes, "B9b", "TECHNICAL REFERENCE", "details", details_technical_reference)
+        notes = append_note_line(notes, "details_technical_reference", details_technical_reference)
 
-    # B9c — details_exchange_and_transaction_costs
+    # notes — details_exchange_and_transaction_costs
     if details_exchange_and_transaction_costs:
-        notes = append_note_line(notes, "B9c", "EXCHANGE AND COSTS", "details", details_exchange_and_transaction_costs)
+        notes = append_note_line(
+            notes, "details_exchange_and_transaction_costs", details_exchange_and_transaction_costs
+        )
 
-    # C1 — transaction type notes
+    # notes — details_transaction_type
+    if details_transaction_type:
+        notes = append_note_line(notes, "details_transaction_type", details_transaction_type)
+
+    # notes — column_transaction_type
     if not column_transaction_type:
         raise ValueError("Missing transaction type")
-    if details_transaction_type:
-        notes = append_note_line(notes, "C1", "TRANSACTION TYPE", "details", details_transaction_type)
-
     # Suppress column_transaction_type when details already conveys the same or more specific information:
     # - "Kaartbetaling" (column) is the generic label for "BETALING MET DEBETKAART" (details)
     # - "<X> IN EURO" (column) is the generic label for "<X> ..." (details)
@@ -589,7 +591,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         or details_transaction_type_norm.startswith(column_transaction_type_norm)
     )
     if not column_transaction_type_redundant:
-        notes = append_note_line(notes, "C1", "TRANSACTION TYPE", "column", column_transaction_type)
+        notes = append_note_line(notes, "column_transaction_type", column_transaction_type)
 
     normalized["notes"] = notes
 
