@@ -165,8 +165,7 @@ def main() -> None:
         # -----------------------------------------------------------------
         # Set account-specific duplicate-index path
         # partition_by column value (e.g. asset_account_iban) determines
-        # which index file is used, so one index per account rather than
-        # one per bank.
+        # which index file is used, so one index per account
         # -----------------------------------------------------------------
         partition_by = bank_cfg.get("duplicate_key", {}).get("partition_by")
         if partition_by:
