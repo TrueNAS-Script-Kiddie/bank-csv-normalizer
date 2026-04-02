@@ -177,7 +177,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         r"|"
         r"^(MAANDELIJKSE\s+BIJDRAGE(?:\s+.+)?)"  # group 3: details_description
         r"|"
-        r"^(UITBETALING VAN UW BONUS 2024)(?: UW TROUW WORDT BELOOND ZIE BIJLAGE VOOR DETAILS)"
+        r"^(UITBETALING VAN UW BONUS [0-9]{4})(?: UW TROUW WORDT BELOOND ZIE BIJLAGE VOOR DETAILS)"
         # group 4: details_description
         r"|"
         r"^(NETTO INTERESTEN)(?:\s?\:\s?DETAILS ZIE BIJLAGE)?"  # group 5: details_description
@@ -186,6 +186,10 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         # group 6: fee description
         r"|"
         r"^(GEBRUIKSKOSTEN VOOR DE PERIODE .+?)(?:\s+DETAILS ZIE BIJLAGE)?$"  # group 7: fee description
+        r"|"
+        r"^(INSCHRIJVING OP BELGISCHE EFFECTEN REFERTE : [0-9]+)$"  # group 8: pensioensparen
+        r"|"
+        r"^((?:INTEREST|DOSSIERKOSTEN VOOR|VERVROEGDE TERUGBETALING) KREDIET( [0-9\-]+)?)$"  # group 9: krediet
     )
     match = RE_DESCRIPTION.search(remaining_details)
     if match:
@@ -198,6 +202,8 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             or match.group(5)
             or match.group(6)
             or match.group(7)
+            or match.group(8)
+            or match.group(9)
         ).strip()
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
@@ -273,7 +279,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # A8 — OVERSCHRIJVING
     RE_OVERSCHRIJVING = re.compile(
         r"^"
-        r"(WERO |INSTANT(?:OVER)?|EUROPESE )?"  # group 1: details_transaction_type prefix
+        r"(WERO |INSTANT|EUROPESE |INSTANT EUROPESE )?"  # group 1: details_transaction_type prefix
         r"(OVERSCHRIJVING)"  # group 2: details_transaction_type core
         r"( IN EURO)?"  # group 3: drop
         r"( OP REKENING| VAN REKENING| NAAR)?"  # group 4: drop
@@ -310,7 +316,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_opposing_account_name = rest.strip()
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
-    # A9 — BETALING MET DEBETKAART
+    # A9 — BETALING
     RE_BETALING = re.compile(
         r"^"
         r"((?:TERUG)?BETALING MET (?:DEBET\s?KAART(?: NUMMER)?|BANKKAART MET KAART)"
@@ -404,12 +410,13 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_opposing_account_name = remaining_details
         remaining_details = None
 
-    if details_match_type and remaining_details:
-        raise ValueError(
-            f"Regex match ({details_match_type}), but remaining_details should be empty instead of '{remaining_details}'"  # noqa: E501
-        )
-    elif remaining_details:
-        raise ValueError(f"remaining_details should be empty instead of'{remaining_details}'")
+    if remaining_details and remaining_details not in (details_description or ""):
+        if details_match_type:
+            raise ValueError(
+                f"Regex match ({details_match_type}), but remaining_details should be empty instead of '{remaining_details}'"  # noqa: E501
+            )
+        else:
+            raise ValueError(f"remaining_details should be empty instead of '{remaining_details}'")
 
     # ==================================================================
     # PHASE 2 — WRITE
