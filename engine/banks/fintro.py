@@ -283,9 +283,11 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         r"(OVERSCHRIJVING)"  # group 2: details_transaction_type core
         r"( IN EURO)?"  # group 3: drop
         r"( OP REKENING| VAN REKENING| NAAR)?"  # group 4: drop
-        r"(.*?)"  # group 5: details_opposing_account_iban/bic/name (part 1)
+        r"(.*?)(?= VIA WEB BANKING| VIA MOBILE BANKING| REFERTE OPDRACHTGEVER| UW REFERTE|$)"
+        # group 5: details_opposing_account_iban/bic/name (part 1)
         r"( VIA WEB BANKING| VIA MOBILE BANKING)?"  # group 6: details_transaction_type via
-        r"(.*?)"  # group 7: details_opposing_account_iban/bic/name (part 2)
+        r"(.*?)(?= REFERTE OPDRACHTGEVER| UW REFERTE|$)"
+        # group 7: details_opposing_account_iban/bic/name (part 2)
         r"(?:( REFERTE OPDRACHTGEVER| UW REFERTE)"  # group 8: details_technical_reference label
         r"( : )"  # group 9: drop
         r"(.*?))?$",  # group 10: details_technical_reference value
@@ -527,7 +529,6 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         normalized["opposing_account_name"] = details_opposing_account_name or ""
 
     # description ← column_description &| details_description &| column_structured_ref &| details_structured_ref
-    # MAANDELIJKSE BIJDRAGE free tail overrides both when present
     if details_no_description and (column_description or details_description):
         raise ValueError("ZONDER MEDEDELING present but description found in a dedicated column or details column")
 
@@ -544,13 +545,12 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         if details_description:
             if normalize_for_comparison(column_description) != normalize_for_comparison(details_description):
                 if "NETTO INTERESTEN" in details_description:
-                    normalized["description"] = details_description + ": " + column_description
+                    normalized["description"] = details_description + " - " + column_description
                 else:
                     raise ValueError(
                         f"Mededeling mismatch: column='{column_description}' details='{details_description}'"
                     )
-        else:
-            normalized["description"] = column_description
+        normalized["description"] = column_description
     else:
         normalized["description"] = details_description or ""
 
