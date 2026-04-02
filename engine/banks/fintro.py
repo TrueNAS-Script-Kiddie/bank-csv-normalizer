@@ -569,15 +569,26 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     if details_exchange_and_transaction_costs:
         notes = append_note_line(notes, "B9c", "EXCHANGE AND COSTS", "details", details_exchange_and_transaction_costs)
 
-    # C1 — consistency check: column_transaction_type vs details_transaction_type
+    # C1 — transaction type notes
     if not column_transaction_type:
         raise ValueError("Missing transaction type")
     if details_transaction_type:
         notes = append_note_line(notes, "C1", "TRANSACTION TYPE", "details", details_transaction_type)
-    if not (
-        "Kaartbetaling" in (column_transaction_type or "")
-        and "BETALING MET DEBETKAART" in (details_transaction_type or "")
-    ):
+
+    # Suppress column_transaction_type when details already conveys the same or more specific information:
+    # - "Kaartbetaling" (column) is the generic label for "BETALING MET DEBETKAART" (details)
+    # - "<X> IN EURO" (column) is the generic label for "<X> ..." (details)
+    column_transaction_type_norm = normalize_for_comparison(column_transaction_type).removesuffix("INEURO")
+    details_transaction_type_norm = normalize_for_comparison(details_transaction_type or "")
+    column_transaction_type_is_generic_kaartbetaling = "KAARTBETALING" in column_transaction_type_norm and (
+        "BETALINGMETDEBETKAART" in details_transaction_type_norm
+        or "BETALINGMETBANKKAART" in details_transaction_type_norm
+    )
+    column_transaction_type_redundant = (
+        column_transaction_type_is_generic_kaartbetaling
+        or details_transaction_type_norm.startswith(column_transaction_type_norm)
+    )
+    if not column_transaction_type_redundant:
         notes = append_note_line(notes, "C1", "TRANSACTION TYPE", "column", column_transaction_type)
 
     normalized["notes"] = notes
