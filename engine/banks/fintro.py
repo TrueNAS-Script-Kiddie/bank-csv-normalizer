@@ -570,29 +570,75 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             notes, "details_exchange_and_transaction_costs", details_exchange_and_transaction_costs
         )
 
+    column_transaction_type_norm = normalize_for_comparison(column_transaction_type).removesuffix("INEURO")
+    details_transaction_type_norm = normalize_for_comparison(details_transaction_type or "")
+
     # notes — details_transaction_type
+    if (
+        details_transaction_type
+        and column_transaction_type_norm == "INSTANTOVERSCHRIJVING"
+        and details_transaction_type_norm.startswith("WEROOVERSCHRIJVING")
+    ):
+        details_transaction_type = details_transaction_type.replace("OVERSCHRIJVING", "INSTANTOVERSCHRIJVING")
+    if (
+        details_transaction_type
+        and column_transaction_type_norm == "CORRECTIEKAARTVERRICHTING"
+        and details_transaction_type_norm.startswith("STORTINGOPDEREKENINGGEKOPPELDAANDEDEBETKAART")
+    ):
+        details_transaction_type = details_transaction_type.replace("STORTING", "(CORRECTIE) STORTING")
+    if (
+        details_transaction_type
+        and column_transaction_type_norm == "KAARTBETALING"
+        and details_transaction_type_norm == "BANCONTACTMOBIELEBETALING"
+    ):
+        details_transaction_type = details_transaction_type.replace("BETALING", "KAARTBETALING")
+    if (
+        column_transaction_type_norm == "DOORLOPENDEBETALINGSOPDRACHT"
+        and details_transaction_type_norm == "DOORLOPENDEOPDRACHT"
+    ) or details_transaction_type_norm in column_transaction_type_norm:
+        details_transaction_type = None
     if details_transaction_type:
         notes = append_note_line(notes, "details_transaction_type", details_transaction_type)
 
     # notes — column_transaction_type
     if not column_transaction_type:
         raise ValueError("Missing transaction type")
-    # Suppress column_transaction_type when details already conveys the same or more specific information:
-    # - "Kaartbetaling" (column) is the generic label for "BETALING MET DEBETKAART" (details)
-    # - "<X> IN EURO" (column) is the generic label for "<X> ..." (details)
-    column_transaction_type_norm = normalize_for_comparison(column_transaction_type).removesuffix("INEURO")
-    details_transaction_type_norm = normalize_for_comparison(details_transaction_type or "")
-    column_transaction_type_is_generic_kaartbetaling = "KAARTBETALING" in column_transaction_type_norm and (
-        "BETALINGMETDEBETKAART" in details_transaction_type_norm
-        or "BETALINGMETBANKKAART" in details_transaction_type_norm
-    )
-    column_transaction_type_redundant = (
-        column_transaction_type_is_generic_kaartbetaling
-        or details_transaction_type_norm.startswith(column_transaction_type_norm)
-    )
-    if not column_transaction_type_redundant:
+    if (
+        (
+            "KAARTBETALING" in column_transaction_type_norm
+            and (
+                "BETALINGMETDEBETKAART" in details_transaction_type_norm
+                or "BETALINGMETBANKKAART" in details_transaction_type_norm
+            )
+        )
+        or column_transaction_type_norm in details_transaction_type_norm
+        or (
+            column_transaction_type_norm == "INSTANTOVERSCHRIJVING"
+            and details_transaction_type_norm.startswith("WEROOVERSCHRIJVING")
+        )
+        or (
+            column_transaction_type_norm == "CORRECTIEKAARTVERRICHTING"
+            and details_transaction_type_norm.startswith("STORTINGOPDEREKENINGGEKOPPELDAANDEDEBETKAART")
+        )
+        or (
+            column_transaction_type_norm == "KAARTBETALING"
+            and details_transaction_type_norm == "BANCONTACTMOBIELEBETALING"
+        )
+        or (
+            column_transaction_type_norm == "GELDOPNAMEMETKAART"
+            and details_transaction_type_norm == "GELDOPNAMEAANANDEREAUTOMATENMETKAART"
+        )
+        or (
+            column_transaction_type_norm == "INSTANTOVERSCHRIJVING"
+            and details_transaction_type_norm == "INSTANTEUROPESEOVERSCHRIJVING"
+        )
+    ):
+        column_transaction_type = None
+
+    if column_transaction_type:
         notes = append_note_line(notes, "column_transaction_type", column_transaction_type)
 
+    # Write the notes column
     normalized["notes"] = notes
 
     return normalized
