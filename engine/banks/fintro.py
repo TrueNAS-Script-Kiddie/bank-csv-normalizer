@@ -263,17 +263,19 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         r"((?:GEWEIGERDE )?EUROPESE DOMICILIERING)"  # group 2: details_transaction_type core
         r"( VAN )"  # group 3: drop
         r"(.+?)"  # group 4: details_opposing_account_name
-        r"( MANDAAT NUMMER : )"  # group 5: details_technical_reference fixed
-        r"([A-Z0-9\-]+)"  # group 6: details_technical_reference mandate number
-        r"( REFERTE : )"  # group 7: details_technical_reference fixed
-        r"(.*)$"  # group 8: details_technical_reference reference
+        r"(?: DATUM : ([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}))?"  # group 5: details_dom_date optional
+        r"( MANDAAT NUMMER : )"  # group 6: details_technical_reference fixed
+        r"([A-Z0-9\-]+)"  # group 7: details_technical_reference mandate number
+        r"( REFERTE : )"  # group 8: details_technical_reference fixed
+        r"(.*)$"  # group 9: details_technical_reference reference
     )
     match = RE_DOMICILIERING.search(remaining_details)
     if match:
         details_match_type = "Domiciliering"
         details_transaction_type = ((match.group(1) or "") + match.group(2)).strip()
         details_opposing_account_name = match.group(4).strip()
-        details_technical_reference = (match.group(5) + match.group(6) + match.group(7) + match.group(8)).strip()
+        details_dom_date = (match.group(5) or "").strip() or None
+        details_technical_reference = (match.group(6) + match.group(7) + match.group(8) + match.group(9)).strip()
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
     # A8 — OVERSCHRIJVING
@@ -544,97 +546,118 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         if details_description:
             if normalize_for_comparison(column_description) != normalize_for_comparison(details_description):
                 if "NETTO INTERESTEN" in details_description:
-                    normalized["description"] = details_description + " - " + column_description
+                    normalized["description"] = "Netto interesten : " + column_description
                 else:
                     raise ValueError(
                         f"Mededeling mismatch: column='{column_description}' details='{details_description}'"
                     )
-        normalized["description"] = column_description
+            else:
+                normalized["description"] = column_description
+        else:
+            normalized["description"] = column_description
     else:
         normalized["description"] = details_description or ""
 
     # notes ← assembled from multiple sources
     notes = ""
+    references: str = ""
 
     # notes — details_bank_reference
     if details_bank_reference:
-        notes = append_note_line(notes, "details_bank_reference", details_bank_reference)
+        references = f"Bank referentie: {details_bank_reference}"
 
     # notes — details_technical_reference
     if details_technical_reference:
-        notes = append_note_line(notes, "details_technical_reference", details_technical_reference)
+        if references:
+            references += " "
+        references += details_technical_reference
+
+    if references:
+        notes = append_note_line(notes, "details_references", references)
 
     # notes — details_exchange_and_transaction_costs
     if details_exchange_and_transaction_costs:
-        notes = append_note_line(
-            notes, "details_exchange_and_transaction_costs", details_exchange_and_transaction_costs
-        )
-
-    column_transaction_type_norm = normalize_for_comparison(column_transaction_type).removesuffix("INEURO")
-    details_transaction_type_norm = normalize_for_comparison(details_transaction_type or "")
-
-    # notes — details_transaction_type
-    if (
-        details_transaction_type
-        and column_transaction_type_norm == "INSTANTOVERSCHRIJVING"
-        and details_transaction_type_norm.startswith("WEROOVERSCHRIJVING")
-    ):
-        details_transaction_type = details_transaction_type.replace("OVERSCHRIJVING", "INSTANTOVERSCHRIJVING")
-    if (
-        details_transaction_type
-        and column_transaction_type_norm == "CORRECTIEKAARTVERRICHTING"
-        and details_transaction_type_norm.startswith("STORTINGOPDEREKENINGGEKOPPELDAANDEDEBETKAART")
-    ):
-        details_transaction_type = details_transaction_type.replace("STORTING", "(CORRECTIE) STORTING")
-    if (
-        details_transaction_type
-        and column_transaction_type_norm == "KAARTBETALING"
-        and details_transaction_type_norm == "BANCONTACTMOBIELEBETALING"
-    ):
-        details_transaction_type = details_transaction_type.replace("BETALING", "KAARTBETALING")
-    if (
-        column_transaction_type_norm == "DOORLOPENDEBETALINGSOPDRACHT"
-        and details_transaction_type_norm == "DOORLOPENDEOPDRACHT"
-    ) or details_transaction_type_norm in column_transaction_type_norm:
-        details_transaction_type = None
-    if details_transaction_type:
-        notes = append_note_line(notes, "details_transaction_type", details_transaction_type)
-
-    # notes — column_transaction_type
-    if not column_transaction_type:
-        raise ValueError("Missing transaction type")
-    if (
-        (
-            "KAARTBETALING" in column_transaction_type_norm
-            and (
-                "BETALINGMETDEBETKAART" in details_transaction_type_norm
-                or "BETALINGMETBANKKAART" in details_transaction_type_norm
+        details_eatc_parts = details_exchange_and_transaction_costs.split()
+        if len(details_eatc_parts) != 2 or not (
+            details_eatc_parts[0] == column_account_currency_code
+            and float(details_eatc_parts[1].replace(",", ".")) == abs(float(column_amount.replace(",", ".")))
+        ):
+            if re.match(r"^[A-Za-z]{3} \d", details_exchange_and_transaction_costs):
+                sign = "-" if column_amount.startswith("-") else ""
+                details_exchange_and_transaction_costs = (
+                    "Amount: " + details_eatc_parts[0] + " " + sign + " ".join(details_eatc_parts[1:])
+                )
+            details_exchange_and_transaction_costs = (
+                details_exchange_and_transaction_costs.replace("BEHANDELINGSKOSTEN", "Behandelingskosten")
+                .replace("KOERS", "Koers:")
+                .replace("WISSELKOSTEN", "Wisselkosten")
             )
-        )
-        or column_transaction_type_norm in details_transaction_type_norm
-        or (
-            column_transaction_type_norm == "INSTANTOVERSCHRIJVING"
-            and details_transaction_type_norm.startswith("WEROOVERSCHRIJVING")
-        )
-        or (
-            column_transaction_type_norm == "CORRECTIEKAARTVERRICHTING"
-            and details_transaction_type_norm.startswith("STORTINGOPDEREKENINGGEKOPPELDAANDEDEBETKAART")
-        )
-        or (
+            notes = (
+                f"{notes}\n{details_exchange_and_transaction_costs}"
+                if notes
+                else details_exchange_and_transaction_costs
+            )
+
+    if column_transaction_type:
+        column_transaction_type_norm = normalize_for_comparison(column_transaction_type).removesuffix("INEURO")
+    else:
+        raise ValueError("Missing transaction type")
+
+    if details_transaction_type:
+        details_transaction_type_norm = normalize_for_comparison(details_transaction_type or "")
+        if column_transaction_type_norm == "INSTANTOVERSCHRIJVING" and details_transaction_type_norm.startswith(
+            "WEROOVERSCHRIJVING"
+        ):
+            details_transaction_type = details_transaction_type.replace("OVERSCHRIJVING", "INSTANTOVERSCHRIJVING")
+            column_transaction_type = None
+        elif column_transaction_type_norm == "CORRECTIEKAARTVERRICHTING" and details_transaction_type_norm.startswith(
+            "STORTINGOPDEREKENINGGEKOPPELDAANDEDEBETKAART"
+        ):
+            details_transaction_type = details_transaction_type.replace("STORTING", "(CORRECTIE) STORTING")
+            column_transaction_type = None
+        elif (
             column_transaction_type_norm == "KAARTBETALING"
             and details_transaction_type_norm == "BANCONTACTMOBIELEBETALING"
-        )
-        or (
+        ):
+            details_transaction_type = details_transaction_type.replace("BETALING", "KAARTBETALING")
+            column_transaction_type = None
+        elif "KAARTBETALING" in column_transaction_type_norm and (
+            "BETALINGMETDEBETKAART" in details_transaction_type_norm
+            or "BETALINGMETBANKKAART" in details_transaction_type_norm
+        ):
+            column_transaction_type = None
+        elif (
             column_transaction_type_norm == "GELDOPNAMEMETKAART"
             and details_transaction_type_norm == "GELDOPNAMEAANANDEREAUTOMATENMETKAART"
-        )
-        or (
+        ):
+            column_transaction_type = None
+        elif (
             column_transaction_type_norm == "INSTANTOVERSCHRIJVING"
             and details_transaction_type_norm == "INSTANTEUROPESEOVERSCHRIJVING"
-        )
-    ):
-        column_transaction_type = None
+        ):
+            column_transaction_type = None
+        elif (
+            column_transaction_type_norm == "DOORLOPENDEBETALINGSOPDRACHT"
+            and details_transaction_type_norm == "DOORLOPENDEOPDRACHT"
+        ):
+            details_transaction_type = None
+        elif (
+            column_transaction_type_norm == "TEGENBOEKINGBETAALDEDOMICILIERING"
+            and details_transaction_type_norm == "GEWEIGERDEEUROPESEDOMICILIERING"
+        ):
+            column_transaction_type = "Tegenboeking van geweigerde / betaalde / Europese Domiciliëring" + (
+                f" op datum {details_dom_date}" if details_dom_date else ""
+            )
+            details_transaction_type = None
+        elif details_transaction_type_norm in column_transaction_type_norm:
+            details_transaction_type = None
+        elif column_transaction_type_norm in details_transaction_type_norm:
+            column_transaction_type = None
 
+    # notes — details_transaction_type
+    if details_transaction_type:
+        notes = append_note_line(notes, "details_transaction_type", details_transaction_type)
+    # notes — column_transaction_type
     if column_transaction_type:
         notes = append_note_line(notes, "column_transaction_type", column_transaction_type)
 
