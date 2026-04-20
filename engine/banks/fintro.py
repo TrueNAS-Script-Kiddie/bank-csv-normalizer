@@ -91,11 +91,6 @@ def normalize_for_comparison(value: str) -> str:
     return re.sub(r"\s+", "", value).upper()
 
 
-def append_note_line(notes: str, source: str, value: str) -> str:
-    line = f"{source}: {value}"
-    return f"{notes}\n{line}" if notes else line
-
-
 # ----------------------------------------------------------------------
 # Main normalize function
 # ----------------------------------------------------------------------
@@ -665,10 +660,10 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
 
     # notes — details_transaction_type
     if details_transaction_type:
-        notes = append_note_line(notes, "details_transaction_type", details_transaction_type)
+        notes = f"{notes}\n{details_transaction_type}" if notes else details_transaction_type
     # notes — column_transaction_type
     if column_transaction_type:
-        notes = append_note_line(notes, "column_transaction_type", column_transaction_type)
+        notes = f"{notes}\n{column_transaction_type}" if notes else column_transaction_type
 
     # Write the notes column
     normalized["notes"] = notes
