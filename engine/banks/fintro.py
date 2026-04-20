@@ -277,6 +277,10 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_dom_date = (match.group(5) or "").strip() or None
         details_technical_reference = (match.group(6) + match.group(7) + match.group(8) + match.group(9)).strip()
         remaining_details = remaining_details.replace(match.group(0), "").strip()
+        if details_technical_reference:
+            details_technical_reference = details_technical_reference.replace(
+                "MANDAAT NUMMER :", "Mandaat nummer:"
+            ).replace("REFERTE :", "Referte:")
 
     # A8 — OVERSCHRIJVING
     RE_OVERSCHRIJVING = re.compile(
@@ -319,6 +323,10 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             rest = rest.replace(match_iban_bic.group(0), "").strip()
         details_opposing_account_name = rest.strip()
         remaining_details = remaining_details.replace(match.group(0), "").strip()
+        if details_technical_reference:
+            details_technical_reference = details_technical_reference.replace(
+                "REFERTE OPDRACHTGEVER :", "Referte opdrachtgever:"
+            ).replace("UW REFERTE :", "Uw referte:")
 
     # A9 — BETALING
     RE_BETALING = re.compile(
@@ -353,6 +361,12 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_payment_date = match.group(5).strip() + " " + time_part
         details_exchange_and_transaction_costs = match.group(8).strip() or None
         remaining_details = remaining_details.replace(match.group(0), "").strip()
+        if details_exchange_and_transaction_costs:
+            details_exchange_and_transaction_costs = (
+                details_exchange_and_transaction_costs.replace("BEHANDELINGSKOSTEN", "Behandelingskosten")
+                .replace("KOERS", "Koers:")
+                .replace("WISSELKOSTEN", "Wisselkosten")
+            )
 
     # A10 — MOBIELE BETALING
     RE_MOBIELE_BETALING = re.compile(
@@ -564,7 +578,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
 
     # notes — details_bank_reference
     if details_bank_reference:
-        references = f"Bank referentie: {details_bank_reference}"
+        references = f"Bankreferentie: {details_bank_reference}"
 
     # notes — details_technical_reference
     if details_technical_reference:
@@ -573,7 +587,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         references += details_technical_reference
 
     if references:
-        notes = append_note_line(notes, "details_references", references)
+        notes = f"{notes}\n{references}" if notes else references
 
     # notes — details_exchange_and_transaction_costs
     if details_exchange_and_transaction_costs:
@@ -585,13 +599,8 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             if re.match(r"^[A-Za-z]{3} \d", details_exchange_and_transaction_costs):
                 sign = "-" if column_amount.startswith("-") else ""
                 details_exchange_and_transaction_costs = (
-                    "Amount: " + details_eatc_parts[0] + " " + sign + " ".join(details_eatc_parts[1:])
+                    "Bedrag: " + details_eatc_parts[0] + " " + sign + " ".join(details_eatc_parts[1:])
                 )
-            details_exchange_and_transaction_costs = (
-                details_exchange_and_transaction_costs.replace("BEHANDELINGSKOSTEN", "Behandelingskosten")
-                .replace("KOERS", "Koers:")
-                .replace("WISSELKOSTEN", "Wisselkosten")
-            )
             notes = (
                 f"{notes}\n{details_exchange_and_transaction_costs}"
                 if notes
