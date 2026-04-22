@@ -592,23 +592,15 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             normalized["description"] = column_description
     else:
         normalized["description"] = details_description
+        if (
+            details_description.startswith("Uitbetaling van uw bonus")
+            and column_transaction_type == "Kosten rekeningbeheer"
+        ):
+            column_transaction_type = "Opbrengsten in verband met de rekening"
 
     # notes ← assembled from multiple sources
     notes = ""
     references: str = ""
-
-    # notes — details_bank_reference
-    if details_bank_reference:
-        references = f"Bankreferentie: {details_bank_reference}"
-
-    # notes — details_technical_reference
-    if details_technical_reference:
-        if references:
-            references += " "
-        references += details_technical_reference
-
-    # if references:
-    #     notes = f"{notes}\n{references}" if notes else references
 
     # notes — details_exchange_and_transaction_costs
     if details_exchange_and_transaction_costs:
@@ -622,11 +614,11 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
                 details_exchange_and_transaction_costs = (
                     "Bedrag: " + details_eatc_parts[0] + " " + sign + " ".join(details_eatc_parts[1:])
                 )
-            # notes = (
-            #     f"{notes}\n{details_exchange_and_transaction_costs}"
-            #     if notes
-            #     else details_exchange_and_transaction_costs
-            # )
+            notes = (
+                f"{notes}\n{details_exchange_and_transaction_costs}"
+                if notes
+                else details_exchange_and_transaction_costs
+            )
 
     if column_transaction_type:
         column_transaction_type_norm = normalize_for_comparison(column_transaction_type).removesuffix("INEURO")
@@ -640,10 +632,11 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         ):
             details_transaction_type = details_transaction_type.replace("OVERSCHRIJVING", "INSTANTOVERSCHRIJVING")
             column_transaction_type = ""
-        elif column_transaction_type_norm == "CORRECTIEKAARTVERRICHTING" and details_transaction_type_norm.startswith(
-            "STORTINGOPDEREKENINGGEKOPPELDAANDEDEBETKAART"
+        elif column_transaction_type_norm == "CORRECTIEKAARTVERRICHTING" and (
+            details_transaction_type_norm.startswith("STORTINGOPDEREKENINGGEKOPPELDAANDEDEBETKAART")
+            or "TERUGBETALINGMETDEBETKAART" in details_transaction_type_norm
         ):
-            details_transaction_type = details_transaction_type.replace("STORTING", "(CORRECTIE) STORTING")
+            details_transaction_type = "(Correctie) " + details_transaction_type
             column_transaction_type = ""
         elif (
             column_transaction_type_norm == "KAARTBETALING"
@@ -656,9 +649,8 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             or "BETALINGMETBANKKAART" in details_transaction_type_norm
         ):
             column_transaction_type = ""
-        elif (
-            column_transaction_type_norm == "GELDOPNAMEMETKAART"
-            and details_transaction_type_norm == "GELDOPNAMEAANANDEREAUTOMATENMETKAART"
+        elif "GELDOPNAME" in column_transaction_type_norm and (
+            "GELDOPNAME" in details_transaction_type_norm or "GELDOPNEMING" in details_transaction_type_norm
         ):
             column_transaction_type = ""
         elif (
@@ -679,6 +671,19 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
                 f" op datum {details_dom_date}" if details_dom_date else ""
             )
             details_transaction_type = ""
+        elif column_transaction_type_norm == "AFLOSSINGKREDIET" and details_transaction_type_norm == "OVERSCHRIJVING":
+            details_transaction_type = "Overschrijving voor aflossing krediet"
+            column_transaction_type = ""
+        elif details_transaction_type.startswith("6703 04XX XXXX"):
+            if column_transaction_type == "Kaartbetaling":
+                details_transaction_type = "Betaling met debetkaart " + details_transaction_type
+                column_transaction_type = ""
+            elif column_transaction_type == "Geldopname met kaart":
+                details_transaction_type = "Geldopneming met debetkaart " + details_transaction_type
+                column_transaction_type = ""
+            elif column_transaction_type == "Geldopname in buitenland":
+                details_transaction_type = "Geldopneming in buitenland met debetkaart " + details_transaction_type
+                column_transaction_type = ""
         elif details_transaction_type_norm in column_transaction_type_norm:
             details_transaction_type = ""
         elif column_transaction_type_norm in details_transaction_type_norm:
@@ -689,15 +694,92 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     ):
         column_transaction_type = ""
 
+    if column_transaction_type and details_transaction_type:
+        raise ValueError(
+            f"Both 'column_transaction_type' ({column_transaction_type}) and "
+            f"'details_transaction_type' ({details_transaction_type}) have a value.\n"
+            "By now, at least one of them should be empty. A normalisation seems missing..."
+        )
+
     # notes — details_transaction_type
     if details_transaction_type:
-        details_transaction_type = (
-            details_transaction_type.replace("  ", " ").replace("BANCONTACT", "Bancontact").replace("", "")
+        REPLACE_IN_DETAILS_TRANSACTION_TYPE = [
+            ("  ", " "),
+            ("BETALING MET BANKKAART MET KAART", "Betaling met debetkaart"),
+            ("BETALING MET DEBET KAART NUMMER", "Betaling met debetkaart"),
+            ("BETALING MET DEBETKAART NUMMER", "Betaling met debetkaart"),
+            ("BANCONTACT Betaling", "Bancontact betaling"),
+            ("GELDOPNEMING MET DEBETKAART NUMMER", "Geldopneming met debetkaart"),
+            ("GELDOPNAME AAN ANDERE AUTOMATEN MET KAART", "Geldopneming aan andere automaten met debetkaart"),
+            ("GELDOPNAME AAN ONZE AUTOMATEN MET KAART", "Geldopneming aan onze automaten met debetkaart"),
+            ("GELDOPNEMING AAN ANDERE AUTOMATEN MET KAART", "Geldopneming aan andere automaten met debetkaart"),
+            ("GELDOPNEMING AAN ONZE AUTOMATEN MET KAART", "Geldopneming aan onze automaten met debetkaart"),
+            (
+                "GELDOPNEMING AAN ANDERE AUTOMATEN MET DEBETKAART NUMMER",
+                "Geldopneming aan andere automaten met debetkaart",
+            ),
+            ("GELDOPNEMING AAN ONZE AUTOMATEN MET DEBETKAART NUMMER", "Geldopneming aan onze automaten met debetkaart"),
+            (
+                "GELDOPNEMING AAN ONZE AUTOMATEN BE MET DEBETKAART NUMMER",
+                "Geldopneming aan onze automaten met debetkaart",
+            ),
+            ("INSTANT EUROPESE OVERSCHRIJVING", "Europese instantoverschrijving"),
+            ("INSTANT OVERSCHRIJVING", "Instantoverschrijving"),
+            ("INSTANTOVERSCHRIJVING", "Instantoverschrijving"),
+            ("EERSTE INVORDERING VAN EEN EUROPESE DOMICILIERING", "Eerste invordering van een Europese domiciliëring"),
+            ("EUROPESE DOMICILIERING", "Europese domiciliëring"),
+            ("EUROPESE OVERSCHRIJVING", "Europese overschrijving"),
+            ("VIA WEB BANKING", "via Web Banking"),
+            ("VIA MOBILE BANKING", "via Mobile Banking"),
+            ("OVERSCHRIJVING", "Overschrijving"),
+            ("TERUGBETALING MET DEBETKAART", "Terugbetaling met debetkaart"),
+            ("BANCONTACT Betaling", "Bancontact betaling"),
+            ("BANCONTACT Terugbetaling", "Bancontact terugbetaling"),
+            ("BANCONTACT Geldopneming", "Bancontact geldopneming"),
+            ("BANCONTACT PAYCONIQ Betaling", "Bancontact Payconiq betaling"),
+            ("WERO Instantoverschrijving", "Wero instantoverschrijving"),
+            ("VISA DEBIT - CONTACTLOOS Betaling", "Visa Debit (contactloos) betaling"),
+            ("VISA DEBIT - eCommerce Betaling", "Visa Debit (eCommerce) betaling"),
+            ("VISA DEBIT Betaling", "Visa Debit betaling"),
+            ("VISA DEBIT Geldopneming", "Visa Debit geldopneming"),
+            ("BANCONTACT MOBIELE KAARTBETALING", "Mobiele betaling met debetkaart"),
+            (
+                "STORTING OP DE REKENING GEKOPPELD AAN DE DEBETKAART NUMMER",
+                "Storting op de rekening gekoppeld aan de debetkaart",
+            ),
+        ]
+        for old_value, new_value in REPLACE_IN_DETAILS_TRANSACTION_TYPE:
+            details_transaction_type = details_transaction_type.replace(old_value, new_value)
+        RE_NORMALIZE_CARDNUMBER = re.compile(r"\b(\d{4} \d{2}XX XXXX) X(\d{3}) (\d)\b")
+        details_transaction_type = RE_NORMALIZE_CARDNUMBER.sub(
+            lambda match: f"{match.group(1)} {match.group(2)}{match.group(3)}", details_transaction_type
         )
         notes = f"{notes}\n{details_transaction_type}" if notes else details_transaction_type
+
     # notes — column_transaction_type
     if column_transaction_type:
+        REPLACE_IN_COLUMN_TRANSACTION_TYPE = [
+            ("Diverse Debetverrichtingen", "Diverse debetverrichtingen"),
+            ("Hypotheekleningen Terugbetalingen", "Hypotheekleningen terugbetalingen"),
+            ("Kaartbetaling", "Betaling met debetkaart"),
+            ("Geldopname met kaart", "Geldopneming met debetkaart"),
+        ]
+        for old_value, new_value in REPLACE_IN_COLUMN_TRANSACTION_TYPE:
+            column_transaction_type = column_transaction_type.replace(old_value, new_value)
         notes = f"{notes}\n{column_transaction_type}" if notes else column_transaction_type
+
+    # notes — details_bank_reference
+    if details_bank_reference:
+        references = f"Bankreferentie: {details_bank_reference}"
+
+    # notes — details_technical_reference
+    if details_technical_reference:
+        if references:
+            references += " "
+        references += details_technical_reference
+
+    if references:
+        notes = f"{notes}\n{references}" if notes else references
 
     # Write the notes column
     normalized["notes"] = notes
