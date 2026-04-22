@@ -139,6 +139,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     details_technical_reference = ""
     details_exchange_and_transaction_costs = ""
 
+    details_dom_date = ""
     details_match_type = ""
 
     # VALUTADATUM -> details_booking_date
@@ -305,7 +306,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         if match.group(8) and match.group(10):
             details_technical_reference = match.group(8).strip() + " : " + match.group(10).strip()
         # details_opposing_account_iban/bic/name
-        rest = (match.group(5) or "") + " " + (match.group(7) or "").strip()
+        rest = (match.group(5) or "").strip() + " " + (match.group(7) or "").strip()
         RE_IBAN_BIC = re.compile(
             r"\b([A-Z]{2}\s*\d{2}(?:\s*[A-Z0-9]){11,30})\s+BIC\s+([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b",
             re.IGNORECASE,
@@ -709,7 +710,6 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             ("BETALING MET BANKKAART MET KAART", "Betaling met debetkaart"),
             ("BETALING MET DEBET KAART NUMMER", "Betaling met debetkaart"),
             ("BETALING MET DEBETKAART NUMMER", "Betaling met debetkaart"),
-            ("BANCONTACT Betaling", "Bancontact betaling"),
             ("GELDOPNEMING MET DEBETKAART NUMMER", "Geldopneming met debetkaart"),
             ("GELDOPNAME AAN ANDERE AUTOMATEN MET KAART", "Geldopneming aan andere automaten met debetkaart"),
             ("GELDOPNAME AAN ONZE AUTOMATEN MET KAART", "Geldopneming aan onze automaten met debetkaart"),
