@@ -127,19 +127,19 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # -- Multi purpose column: details --
     remaining_details = csv_row.get("details", "")
 
-    details_booking_date = None
-    details_bank_reference = None
-    details_transaction_processing_date = None
-    details_description = None
-    details_opposing_account_name = None
-    details_transaction_type = None
-    details_payment_date = None
-    details_opposing_account_iban = None
-    details_opposing_account_bic = None
-    details_technical_reference = None
-    details_exchange_and_transaction_costs = None
+    details_booking_date = ""
+    details_bank_reference = ""
+    details_transaction_processing_date = ""
+    details_description = ""
+    details_opposing_account_name = ""
+    details_transaction_type = ""
+    details_payment_date = ""
+    details_opposing_account_iban = ""
+    details_opposing_account_bic = ""
+    details_technical_reference = ""
+    details_exchange_and_transaction_costs = ""
 
-    details_match_type = None
+    details_match_type = ""
 
     # A1 — Postfix: VALUTADATUM
     RE_BOOKING_DATE = re.compile(r"VALUTADATUM\s*:\s*(\d{2}/\d{2}/\d{4})$")
@@ -269,7 +269,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_match_type = "Domiciliering"
         details_transaction_type = ((match.group(1) or "") + match.group(2)).strip()
         details_opposing_account_name = match.group(4).strip()
-        details_dom_date = (match.group(5) or "").strip() or None
+        details_dom_date = (match.group(5) or "").strip()
         details_technical_reference = (match.group(6) + match.group(7) + match.group(8) + match.group(9)).strip()
         remaining_details = remaining_details.replace(match.group(0), "").strip()
         if details_technical_reference:
@@ -350,11 +350,11 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             + (match.group(4) or "").strip()
             + " "
             + match.group(1).strip()
-        )
+        ).strip()
         details_opposing_account_name = match.group(3).strip()
         time_part = ((match.group(7) or "").replace(" U ", ":") or "00:00").strip()
         details_payment_date = match.group(5).strip() + " " + time_part
-        details_exchange_and_transaction_costs = match.group(8).strip() or None
+        details_exchange_and_transaction_costs = match.group(8).strip()
         remaining_details = remaining_details.replace(match.group(0), "").strip()
         if details_exchange_and_transaction_costs:
             details_exchange_and_transaction_costs = (
@@ -430,7 +430,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             if match.group(1):
                 details_transaction_type = match.group(1).strip()
             details_opposing_account_name = match.group(3).strip()
-            remaining_details = None
+            remaining_details = ""
 
     # Remaining details
     if remaining_details and remaining_details not in (details_description or ""):
@@ -471,7 +471,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     normalized["primary_transaction_date"] = column_primary_transaction_date
 
     # transaction_processing_date ← details_transaction_processing_date (optional)
-    normalized["transaction_processing_date"] = details_transaction_processing_date or ""
+    normalized["transaction_processing_date"] = details_transaction_processing_date
 
     # booking_date ← column_booking_date &| details_booking_date (match)
     if details_booking_date and details_booking_date != column_booking_date:
@@ -482,7 +482,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     normalized["booking_date"] = column_booking_date
 
     # payment_date ← details_payment_date (optional)
-    normalized["payment_date"] = details_payment_date or ""
+    normalized["payment_date"] = details_payment_date
 
     # amount ← column_amount
     normalized["amount"] = column_amount.replace(",", ".").strip()
@@ -506,10 +506,10 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             f"column_opposing_account_iban='{column_opposing_account_iban}' "
             f"details_opposing_account_iban='{details_opposing_account_iban}'"
         )
-    normalized["opposing_account_iban"] = column_opposing_account_iban or details_opposing_account_iban or ""
+    normalized["opposing_account_iban"] = column_opposing_account_iban or details_opposing_account_iban
 
     # opposing_account_bic ← details_opposing_account_bic
-    normalized["opposing_account_bic"] = details_opposing_account_bic or ""
+    normalized["opposing_account_bic"] = details_opposing_account_bic
 
     # opposing_account_name ← column_opposing_account_name &| details_opposing_account_name (append)
     if column_opposing_account_name:
@@ -546,11 +546,29 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         else:
             normalized["opposing_account_name"] = column_opposing_account_name
     else:
-        normalized["opposing_account_name"] = details_opposing_account_name or ""
+        normalized["opposing_account_name"] = details_opposing_account_name
 
     # description ← column_description &| details_description &| column_structured_ref &| details_structured_ref
     if details_no_description and (column_description or details_description):
         raise ValueError("ZONDER MEDEDELING present but description found in a dedicated column or details column")
+    REPLACE_IN_DETAILS_DESCRIPTION = [
+        ("NETTO INTERESTEN", "Netto interesten : "),
+        ("MAANDELIJKSE BIJDRAGE FINTRO BLUE", "Maandelijkse bijdrage voor Fintro Blue"),
+        ("TERUGBETALING WOONKREDIET", "Terugbetaling woonkrediet"),
+        ("UITBETALING VAN UW BONUS", "Uitbetaling van uw bonus"),
+        ("MAANDELIJKSE EQUIPERINGSKOSTEN VOOR DE PERIODE", "Maandelijkse equiperingskosten voor de periode"),
+        (" TOT ", " tot "),
+        ("GEBRUIKSKOSTEN VOOR DE PERIODE", "Gebruikskosten voor de periode"),
+        (
+            "INSCHRIJVING OP BELGISCHE EFFECTEN REFERTE",
+            "Inschrijving op de Belgische effecten (pensioensparen), referte",
+        ),
+        ("INTEREST KREDIET", "Interest krediet"),
+        ("DOSSIERKOSTEN VOOR KREDIET", "Dossierkosten voor krediet"),
+        ("VERVROEGDE TERUGBETALING KREDIET", "Vervroegde terugbetaling krediet"),
+    ]
+    for old_value, new_value in REPLACE_IN_DETAILS_DESCRIPTION:
+        details_description = details_description.replace(old_value, new_value)
     column_structured_ref = extract_structured_ref(column_description)
     details_structured_ref = extract_structured_ref(details_description)
     if column_structured_ref or details_structured_ref:
@@ -562,8 +580,8 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     elif column_description:
         if details_description:
             if normalize_for_comparison(column_description) != normalize_for_comparison(details_description):
-                if "NETTO INTERESTEN" in details_description:
-                    normalized["description"] = "Netto interesten : " + column_description
+                if "Netto interesten : " in details_description:
+                    normalized["description"] = details_description + column_description
                 else:
                     raise ValueError(
                         f"Mededeling mismatch: column='{column_description}' details='{details_description}'"
@@ -573,7 +591,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         else:
             normalized["description"] = column_description
     else:
-        normalized["description"] = details_description or ""
+        normalized["description"] = details_description
 
     # notes ← assembled from multiple sources
     notes = ""
@@ -616,43 +634,43 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         raise ValueError("Missing transaction type")
 
     if details_transaction_type:
-        details_transaction_type_norm = normalize_for_comparison(details_transaction_type or "")
+        details_transaction_type_norm = normalize_for_comparison(details_transaction_type)
         if column_transaction_type_norm == "INSTANTOVERSCHRIJVING" and details_transaction_type_norm.startswith(
             "WEROOVERSCHRIJVING"
         ):
             details_transaction_type = details_transaction_type.replace("OVERSCHRIJVING", "INSTANTOVERSCHRIJVING")
-            column_transaction_type = None
+            column_transaction_type = ""
         elif column_transaction_type_norm == "CORRECTIEKAARTVERRICHTING" and details_transaction_type_norm.startswith(
             "STORTINGOPDEREKENINGGEKOPPELDAANDEDEBETKAART"
         ):
             details_transaction_type = details_transaction_type.replace("STORTING", "(CORRECTIE) STORTING")
-            column_transaction_type = None
+            column_transaction_type = ""
         elif (
             column_transaction_type_norm == "KAARTBETALING"
             and details_transaction_type_norm == "BANCONTACTMOBIELEBETALING"
         ):
             details_transaction_type = details_transaction_type.replace("BETALING", "KAARTBETALING")
-            column_transaction_type = None
+            column_transaction_type = ""
         elif "KAARTBETALING" in column_transaction_type_norm and (
             "BETALINGMETDEBETKAART" in details_transaction_type_norm
             or "BETALINGMETBANKKAART" in details_transaction_type_norm
         ):
-            column_transaction_type = None
+            column_transaction_type = ""
         elif (
             column_transaction_type_norm == "GELDOPNAMEMETKAART"
             and details_transaction_type_norm == "GELDOPNAMEAANANDEREAUTOMATENMETKAART"
         ):
-            column_transaction_type = None
+            column_transaction_type = ""
         elif (
             column_transaction_type_norm == "INSTANTOVERSCHRIJVING"
             and details_transaction_type_norm == "INSTANTEUROPESEOVERSCHRIJVING"
         ):
-            column_transaction_type = None
+            column_transaction_type = ""
         elif (
             column_transaction_type_norm == "DOORLOPENDEBETALINGSOPDRACHT"
             and details_transaction_type_norm == "DOORLOPENDEOPDRACHT"
         ):
-            details_transaction_type = None
+            details_transaction_type = ""
         elif (
             column_transaction_type_norm == "TEGENBOEKINGBETAALDEDOMICILIERING"
             and details_transaction_type_norm == "GEWEIGERDEEUROPESEDOMICILIERING"
@@ -660,11 +678,16 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             column_transaction_type = "Tegenboeking van geweigerde / betaalde / Europese Domiciliëring" + (
                 f" op datum {details_dom_date}" if details_dom_date else ""
             )
-            details_transaction_type = None
+            details_transaction_type = ""
         elif details_transaction_type_norm in column_transaction_type_norm:
-            details_transaction_type = None
+            details_transaction_type = ""
         elif column_transaction_type_norm in details_transaction_type_norm:
-            column_transaction_type = None
+            column_transaction_type = ""
+
+    if column_transaction_type == "Effecteninschrijving" and "Inschrijving op de Belgische effecten" in (
+        details_description
+    ):
+        column_transaction_type = ""
 
     # notes — details_transaction_type
     if details_transaction_type:
