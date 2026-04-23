@@ -4,7 +4,9 @@
       "Bash(ruff check *)",
       "Bash(pre-commit run *)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(rm c:/Apps/bank-csv-normalizer/.claude/docs/architectural_patterns.md)",
+      "Bash(rmdir c:/Apps/bank-csv-normalizer/.claude/docs)"
     ]
   }
 }

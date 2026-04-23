@@ -82,9 +82,11 @@ Defined in [engine/process_csv.py](engine/process_csv.py) and
 
 [.claude/settings.local.json](.claude/settings.local.json) only whitelists
 `ruff check`, `pre-commit run`, and `git add`/`git commit` for permission
-prompts. No PreToolUse/PostToolUse hooks are configured — Claude's workflow
-is not modified by the harness.
+prompts. No PreToolUse/PostToolUse hooks are configured — the agent's
+workflow is not modified by the harness.
 
 ## Additional Documentation
 
-@.claude/rules/architectural_patterns.md
+See [.claude/rules/architectural_patterns.md](.claude/rules/architectural_patterns.md)
+for design patterns, pipeline phases, reconciliation strategy, and error
+criticality tiers.
