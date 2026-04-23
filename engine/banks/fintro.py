@@ -329,7 +329,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         r"((?:TERUG)?BETALING MET (?:DEBET\s?KAART(?: NUMMER)?|BANKKAART MET KAART)"
         r" [0-9]{4}\s[0-9]{2}XX\sXXXX\s(?:[0-9]{4}|X[0-9]{3}\s[0-9]))"
         # group 1: details_transaction_type (part 2)
-        r"( BANCONTACT PAYCONIQ CO)?"  # group 2: details_transaction_type (part 1 primary)
+        r"(?:( BANCONTACT PAYCONIQ)(?: CO)?)?"  # group 2: details_transaction_type (part 1 primary)
         r"(.*)"  # group 3: details_opposing_account_name
         r"( P2P MOBILE)?"  # group 4: details_transaction_type (part 1 primary)
         r"( [0-9]{2}/[0-9]{2}/[0-9]{4})"  # group 5: details_payment_date (date)
@@ -345,7 +345,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     if match:
         details_match_type = "Betaling"
         details_transaction_type = (
-            ((match.group(2) or "").replace(" CO", "").strip() or (match.group(9) or "").strip())
+            ((match.group(2) or "").strip() or (match.group(9) or "").strip())
             + " "
             + (match.group(4) or "").strip()
             + " "
@@ -384,14 +384,15 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     # GELDOPNEMING -> details_transaction_type, details_opposing_account_name, details_payment_date
     RE_GELDOPNEMING = re.compile(
         r"^"
-        r"(GELDOPN(?:EMING|AME)(?: IN EURO)?"
-        r"(?: AAN (?:ANDERE|ONZE) AUTOMATEN(?: BE)?)?"
+        r"(GELDOPN(?:EMING|AME))"  # group 1: transaction_type verb
+        r"(?: IN EURO)?"  # drop
+        r"((?: AAN (?:ANDERE|ONZE) AUTOMATEN(?: BE)?)?"
         r" MET (?:DEBETKAART NUMMER|KAART) [0-9]{4}\s[0-9]{2}XX\sXXXX\s(?:[0-9]{4}|X[0-9]{3}\s[0-9]))"
-        # group 1: transaction_type (part 2)
-        r"(.*)"  # group 2: details_opposing_account_name
-        r"( [0-9]{2}/[0-9]{2}/[0-9]{4})"  # group 3: details_payment_date
-        r"( [0-9]{2}:[0-9]{2}| [0-9]{2} U [0-9]{2})?"  # group 4: details_payment_date (time)
-        r"( BANCONTACT| VISA DEBIT)?"  # group 5: transaction_type (part 1) — absent in older transactions
+        # group 2: transaction_type suffix
+        r"(.*)"  # group 3: details_opposing_account_name
+        r"( [0-9]{2}/[0-9]{2}/[0-9]{4})"  # group 4: details_payment_date
+        r"( [0-9]{2}:[0-9]{2}| [0-9]{2} U [0-9]{2})?"  # group 5: details_payment_date (time)
+        r"( BANCONTACT| VISA DEBIT)?"  # group 6: transaction_type (part 1) — absent in older transactions
         r"$",
         re.IGNORECASE,
     )
@@ -399,11 +400,11 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     if match:
         details_match_type = "Geldopneming"
         details_transaction_type = (
-            (match.group(5) or "").strip() + " " + match.group(1).strip().replace(" IN EURO", "")
+            (match.group(6) or "").strip() + " " + (match.group(1) + match.group(2)).strip()
         ).strip()
-        details_opposing_account_name = match.group(2).strip()
-        time_part = ((match.group(4) or "").replace(" U ", ":") or "00:00").strip()
-        details_payment_date = match.group(3).strip() + " " + time_part
+        details_opposing_account_name = match.group(3).strip()
+        time_part = ((match.group(5) or "").replace(" U ", ":") or "00:00").strip()
+        details_payment_date = match.group(4).strip() + " " + time_part
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
     # Old transactions -> details_transaction_type, details_opposing_account_name
