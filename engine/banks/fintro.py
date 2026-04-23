@@ -3,6 +3,11 @@ import unicodedata
 from datetime import date
 from typing import Any
 
+RE_IBAN_BIC = re.compile(
+    r"\b([A-Z]{2}\s*\d{2}(?:\s*[A-Z0-9]){11,30})\s+BIC\s+([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b",
+    re.IGNORECASE,
+)
+
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
@@ -91,6 +96,12 @@ def normalize_for_comparison(value: str) -> str:
     return re.sub(r"\s+", "", value).upper()
 
 
+def apply_replacements(value: str, replacements: list[tuple[str, str]]) -> str:
+    for old, new in replacements:
+        value = value.replace(old, new)
+    return value
+
+
 # ----------------------------------------------------------------------
 # Main normalize function
 # ----------------------------------------------------------------------
@@ -138,6 +149,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     details_opposing_account_bic = ""
     details_technical_reference = ""
     details_exchange_and_transaction_costs = ""
+    details_no_description = False
 
     details_dom_date = ""
     details_match_type = ""
@@ -205,7 +217,6 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
     # ZONDER MEDEDELING -> details_no_description
-    details_no_description = False
     RE_NO_DESCRIPTION = re.compile(r"\bZONDER\s+MEDEDELING\b$")
     match = RE_NO_DESCRIPTION.search(remaining_details)
     if match:
@@ -242,16 +253,12 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_match_type = "Doorlopende opdracht"
         details_transaction_type = match.group(2).strip()
         rest = match.group(4).strip()
-        RE_IBAN_BIC = re.compile(
-            r"\b([A-Z]{2}\s*\d{2}(?:\s*[A-Z0-9]){11,30})\s+BIC\s+([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b",
-            re.IGNORECASE,
-        )
         match_iban_bic = RE_IBAN_BIC.search(rest)
         if match_iban_bic:
             details_opposing_account_iban = parse_iban(match_iban_bic.group(1))
             details_opposing_account_bic = match_iban_bic.group(2)
             rest = rest.replace(match_iban_bic.group(0), "").strip()
-        details_opposing_account_name = rest.strip()
+        details_opposing_account_name = rest
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
     # DOMICILIERING -> details_transaction_type, details_opposing_account_name, details_dom_date,
@@ -307,10 +314,6 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             details_technical_reference = match.group(8).strip() + " : " + match.group(10).strip()
         # details_opposing_account_iban/bic/name
         rest = (match.group(5) or "").strip() + " " + (match.group(7) or "").strip()
-        RE_IBAN_BIC = re.compile(
-            r"\b([A-Z]{2}\s*\d{2}(?:\s*[A-Z0-9]){11,30})\s+BIC\s+([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b",
-            re.IGNORECASE,
-        )
         match_iban_bic = RE_IBAN_BIC.search(rest)
         if match_iban_bic:
             details_opposing_account_iban = parse_iban(match_iban_bic.group(1))
@@ -370,10 +373,6 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         details_match_type = "Mobiele betaling"
         details_transaction_type = match.group(4).strip() + " " + match.group(1).strip()
         rest = match.group(3).strip()
-        RE_IBAN_BIC = re.compile(
-            r"\b([A-Z]{2}\s*\d{2}(?:\s*[A-Z0-9]){11,30})\s+BIC\s+([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b",
-            re.IGNORECASE,
-        )
         match_iban_bic = RE_IBAN_BIC.search(rest)
         if match_iban_bic:
             details_opposing_account_iban = parse_iban(match_iban_bic.group(1))
@@ -425,7 +424,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             remaining_details = ""
 
     # Remaining details
-    if remaining_details and remaining_details not in (details_description or ""):
+    if remaining_details and remaining_details not in details_description:
         if details_match_type:
             raise ValueError(
                 f"Regex match ({details_match_type}), but remaining_details should be empty instead of '{remaining_details}'"  # noqa: E501
@@ -559,8 +558,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         ("DOSSIERKOSTEN VOOR KREDIET", "Dossierkosten voor krediet"),
         ("VERVROEGDE TERUGBETALING KREDIET", "Vervroegde terugbetaling krediet"),
     ]
-    for old_value, new_value in REPLACE_IN_DETAILS_DESCRIPTION:
-        details_description = details_description.replace(old_value, new_value)
+    details_description = apply_replacements(details_description, REPLACE_IN_DETAILS_DESCRIPTION)
     column_structured_ref = extract_structured_ref(column_description)
     details_structured_ref = extract_structured_ref(details_description)
     if column_structured_ref or details_structured_ref:
@@ -591,8 +589,8 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             column_transaction_type = "Opbrengsten in verband met de rekening"
 
     # mix -> notes
-    notes = ""
-    references: str = ""
+    notes_parts: list[str] = []
+    reference_parts: list[str] = []
 
     # details_exchange_and_transaction_costs -> notes
     if details_exchange_and_transaction_costs:
@@ -601,10 +599,9 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             ("KOERS", "Koers:"),
             ("WISSELKOSTEN", "Wisselkosten"),
         ]
-        for old_value, new_value in REPLACE_IN_DETAILS_EXCHANGE_AND_TRANSACTION_COSTS:
-            details_exchange_and_transaction_costs = details_exchange_and_transaction_costs.replace(
-                old_value, new_value
-            )
+        details_exchange_and_transaction_costs = apply_replacements(
+            details_exchange_and_transaction_costs, REPLACE_IN_DETAILS_EXCHANGE_AND_TRANSACTION_COSTS
+        )
         details_eatc_parts = details_exchange_and_transaction_costs.split()
         if len(details_eatc_parts) != 2 or not (
             details_eatc_parts[0] == column_account_currency_code
@@ -615,11 +612,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
                 details_exchange_and_transaction_costs = (
                     "Bedrag: " + details_eatc_parts[0] + " " + sign + " ".join(details_eatc_parts[1:])
                 )
-            notes = (
-                f"{notes}\n{details_exchange_and_transaction_costs}"
-                if notes
-                else details_exchange_and_transaction_costs
-            )
+            notes_parts.append(details_exchange_and_transaction_costs)
 
     # Prepare details_transaction_type and column_transaction_type
     if column_transaction_type:
@@ -749,13 +742,12 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
                 "Storting op de rekening gekoppeld aan de debetkaart",
             ),
         ]
-        for old_value, new_value in REPLACE_IN_DETAILS_TRANSACTION_TYPE:
-            details_transaction_type = details_transaction_type.replace(old_value, new_value)
+        details_transaction_type = apply_replacements(details_transaction_type, REPLACE_IN_DETAILS_TRANSACTION_TYPE)
         RE_NORMALIZE_CARDNUMBER = re.compile(r"\b(\d{4} \d{2}XX XXXX) X(\d{3}) (\d)\b")
         details_transaction_type = RE_NORMALIZE_CARDNUMBER.sub(
             lambda match: f"{match.group(1)} {match.group(2)}{match.group(3)}", details_transaction_type
         )
-        notes = f"{notes}\n{details_transaction_type}" if notes else details_transaction_type
+        notes_parts.append(details_transaction_type)
 
     # column_transaction_type -> notes
     if column_transaction_type:
@@ -765,13 +757,12 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             ("Kaartbetaling", "Betaling met debetkaart"),
             ("Geldopname met kaart", "Geldopneming met debetkaart"),
         ]
-        for old_value, new_value in REPLACE_IN_COLUMN_TRANSACTION_TYPE:
-            column_transaction_type = column_transaction_type.replace(old_value, new_value)
-        notes = f"{notes}\n{column_transaction_type}" if notes else column_transaction_type
+        column_transaction_type = apply_replacements(column_transaction_type, REPLACE_IN_COLUMN_TRANSACTION_TYPE)
+        notes_parts.append(column_transaction_type)
 
     # details_bank_reference -> notes
     if details_bank_reference:
-        references = f"Bankreferentie: {details_bank_reference}"
+        reference_parts.append(f"Bankreferentie: {details_bank_reference}")
 
     # details_technical_reference -> notes
     if details_technical_reference:
@@ -781,16 +772,15 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
             ("UW REFERTE :", "Uw referte:"),
             ("REFERTE :", "Referte:"),
         ]
-        for old_value, new_value in REPLACE_IN_DETAILS_TECHNICAL_REFERENCE:
-            details_technical_reference = details_technical_reference.replace(old_value, new_value)
-        if references:
-            references += " "
-        references += details_technical_reference
+        details_technical_reference = apply_replacements(
+            details_technical_reference, REPLACE_IN_DETAILS_TECHNICAL_REFERENCE
+        )
+        reference_parts.append(details_technical_reference)
 
-    if references:
-        notes = f"{notes}\n{references}" if notes else references
+    if reference_parts:
+        notes_parts.append(" ".join(reference_parts))
 
     # Write the notes column
-    normalized["notes"] = notes
+    normalized["notes"] = "\n".join(notes_parts)
 
     return normalized
