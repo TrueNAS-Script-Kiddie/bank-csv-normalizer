@@ -1,0 +1,156 @@
+"""
+Phase 2 reconciliation helpers for Fintro.
+
+Some fields appear in BOTH a dedicated CSV column AND inside the free-text
+'details' column. These helpers compare the two sources, decide what to keep
+or merge, and raise on genuine conflicts.
+"""
+
+from engine.banks.fintro.parsers import normalize_for_comparison
+
+
+def merge_opposing_account_name(column_value: str, details_value: str) -> str:
+    """
+    Return the opposing account name, merging the CSV column and the details
+    column when both are present.
+
+    Rules (normalized, accent- and whitespace-insensitive):
+    - If one side is empty, the other is returned as-is.
+    - If column is fully contained in details and details starts with it,
+      return 'column + remaining tail of details'.
+    - If column matches details but not at the start, return the column value.
+    - Otherwise raise ValueError.
+    """
+    if not column_value:
+        return details_value
+    if not details_value:
+        return column_value
+
+    column_norm = normalize_for_comparison(column_value)
+    details_norm = normalize_for_comparison(details_value)
+
+    if column_norm not in details_norm:
+        raise ValueError(f"Opposing account name mismatch: column='{column_value}' details='{details_value}'")
+
+    if not details_norm.startswith(column_norm):
+        return column_value
+
+    tail_norm_len = len(details_norm) - len(column_norm)
+    if tail_norm_len <= 0:
+        return column_value
+
+    # Map the end of the column prefix (in normalized space) back to an index
+    # in the original details string, so we can take the remaining tail.
+    consumed = 0
+    cut_index = 0
+    for index, char in enumerate(details_value):
+        if not char.isspace():
+            consumed += 1
+        if consumed >= len(column_norm):
+            cut_index = index + 1
+            break
+
+    tail = details_value[cut_index:].strip()
+    if not tail:
+        return column_value
+    return f"{column_value} {tail}".strip()
+
+
+def reconcile_transaction_types(
+    column_transaction_type: str,
+    details_transaction_type: str,
+    details_description: str,
+    details_dom_date: str,
+) -> tuple[str, str]:
+    """
+    Reconcile 'transaction_type' values from the CSV column and the details
+    column. Returns (column_transaction_type, details_transaction_type) after
+    reconciliation — at least one of them will be empty for the caller to
+    assemble into 'notes'.
+
+    Raises ValueError if the CSV column is empty, or if both values remain
+    non-empty after all known reconciliation rules (that indicates a new
+    pattern that needs a rule added here).
+    """
+    if not column_transaction_type:
+        raise ValueError("Missing transaction type")
+
+    column_transaction_type_norm = normalize_for_comparison(column_transaction_type).removesuffix("INEURO")
+
+    if details_transaction_type:
+        details_transaction_type_norm = normalize_for_comparison(details_transaction_type)
+        if column_transaction_type_norm == "INSTANTOVERSCHRIJVING" and details_transaction_type_norm.startswith(
+            "WEROOVERSCHRIJVING"
+        ):
+            details_transaction_type = details_transaction_type.replace("OVERSCHRIJVING", "INSTANTOVERSCHRIJVING")
+            column_transaction_type = ""
+        elif column_transaction_type_norm == "CORRECTIEKAARTVERRICHTING" and (
+            details_transaction_type_norm.startswith("STORTINGOPDEREKENINGGEKOPPELDAANDEDEBETKAART")
+            or "TERUGBETALINGMETDEBETKAART" in details_transaction_type_norm
+        ):
+            details_transaction_type = "(Correctie) " + details_transaction_type
+            column_transaction_type = ""
+        elif (
+            column_transaction_type_norm == "KAARTBETALING"
+            and details_transaction_type_norm == "BANCONTACTMOBIELEBETALING"
+        ):
+            details_transaction_type = details_transaction_type.replace("BETALING", "KAARTBETALING")
+            column_transaction_type = ""
+        elif "KAARTBETALING" in column_transaction_type_norm and (
+            "BETALINGMETDEBETKAART" in details_transaction_type_norm
+            or "BETALINGMETBANKKAART" in details_transaction_type_norm
+        ):
+            column_transaction_type = ""
+        elif "GELDOPNAME" in column_transaction_type_norm and (
+            "GELDOPNAME" in details_transaction_type_norm or "GELDOPNEMING" in details_transaction_type_norm
+        ):
+            column_transaction_type = ""
+        elif (
+            column_transaction_type_norm == "INSTANTOVERSCHRIJVING"
+            and details_transaction_type_norm == "INSTANTEUROPESEOVERSCHRIJVING"
+        ):
+            column_transaction_type = ""
+        elif (
+            column_transaction_type_norm == "DOORLOPENDEBETALINGSOPDRACHT"
+            and details_transaction_type_norm == "DOORLOPENDEOPDRACHT"
+        ):
+            details_transaction_type = ""
+        elif (
+            column_transaction_type_norm == "TEGENBOEKINGBETAALDEDOMICILIERING"
+            and details_transaction_type_norm == "GEWEIGERDEEUROPESEDOMICILIERING"
+        ):
+            column_transaction_type = "Tegenboeking van geweigerde / betaalde / Europese Domiciliëring" + (
+                f" op datum {details_dom_date}" if details_dom_date else ""
+            )
+            details_transaction_type = ""
+        elif column_transaction_type_norm == "AFLOSSINGKREDIET" and details_transaction_type_norm == "OVERSCHRIJVING":
+            details_transaction_type = "Overschrijving voor aflossing krediet"
+            column_transaction_type = ""
+        elif details_transaction_type.startswith("6703 04XX XXXX"):
+            if column_transaction_type == "Kaartbetaling":
+                details_transaction_type = "Betaling met debetkaart " + details_transaction_type
+                column_transaction_type = ""
+            elif column_transaction_type == "Geldopname met kaart":
+                details_transaction_type = "Geldopneming met debetkaart " + details_transaction_type
+                column_transaction_type = ""
+            elif column_transaction_type == "Geldopname in buitenland":
+                details_transaction_type = "Geldopneming in buitenland met debetkaart " + details_transaction_type
+                column_transaction_type = ""
+        elif details_transaction_type_norm in column_transaction_type_norm:
+            details_transaction_type = ""
+        elif column_transaction_type_norm in details_transaction_type_norm:
+            column_transaction_type = ""
+
+    if column_transaction_type == "Effecteninschrijving" and "Inschrijving op de Belgische effecten" in (
+        details_description
+    ):
+        column_transaction_type = ""
+
+    if column_transaction_type and details_transaction_type:
+        raise ValueError(
+            f"Both 'column_transaction_type' ({column_transaction_type}) and "
+            f"'details_transaction_type' ({details_transaction_type}) have a value.\n"
+            "By now, at least one of them should be empty. A normalisation seems missing..."
+        )
+
+    return column_transaction_type, details_transaction_type
