@@ -2,6 +2,7 @@
 config/app.env
 *.xlsx
 .claude/settings.local.json
+data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
