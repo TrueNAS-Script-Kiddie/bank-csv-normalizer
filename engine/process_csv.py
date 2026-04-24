@@ -36,6 +36,9 @@ NORMALIZED_FIELDNAMES = [
     "opposing_account_name",  # 11
     "description",  # 12
     "notes",  # 13
+    "unmapped_exchange_and_transaction_costs",  # 14
+    "unmapped_transaction_type",  # 15
+    "unmapped_reference_parts",  # 16
 ]
 
 

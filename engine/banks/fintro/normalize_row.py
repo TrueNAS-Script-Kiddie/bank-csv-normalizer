@@ -171,6 +171,9 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         "opposing_account_name": "",  # 11
         "description": "",  # 12
         "notes": "",  # 13
+        "unmapped_exchange_and_transaction_costs": "",  # 14
+        "unmapped_transaction_type": "",  # 15
+        "unmapped_reference_parts": "",  # 16
     }
 
     # column_external_id -> external_id
@@ -258,7 +261,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         ):
             column_transaction_type = "Opbrengsten in verband met de rekening"
 
-    # mix -> notes
+    # mix -> notes + unmapped columns
     notes_parts: list[str] = []
     reference_parts: list[str] = []
 
@@ -317,7 +320,9 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     if reference_parts:
         notes_parts.append(" ".join(reference_parts))
 
-    # Write the notes column
     normalized["notes"] = "\n".join(notes_parts)
+    normalized["unmapped_exchange_and_transaction_costs"] = details_exchange_and_transaction_costs
+    normalized["unmapped_transaction_type"] = details_transaction_type or column_transaction_type
+    normalized["unmapped_reference_parts"] = " ".join(reference_parts)
 
     return normalized

@@ -110,7 +110,7 @@ written yet.
 **Phase 2 — Reconcile, reformat, assemble.** No regex or string parsing at
 this stage; only cross-source decisions, cosmetic replacement (via the
 `REPLACE_IN_*` tables in `normalize_row.py`), card-number masking, and final
-assembly of the 13 `NORMALIZED_FIELDNAMES` defined in
+assembly of the 16 `NORMALIZED_FIELDNAMES` defined in
 [engine/process_csv.py](../../engine/process_csv.py).
 
 ## 7. Stateful In-Memory + Persistent Dedup Index
