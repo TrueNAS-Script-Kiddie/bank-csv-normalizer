@@ -282,6 +282,7 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
                     "Bedrag: " + details_eatc_parts[0] + " " + sign + " ".join(details_eatc_parts[1:])
                 )
             notes_parts.append(details_exchange_and_transaction_costs)
+            normalized["unmapped_exchange_and_transaction_costs"] = details_exchange_and_transaction_costs
 
     # Reconcile column_transaction_type and details.transaction_type
     column_transaction_type, details_transaction_type = reconcile_transaction_types(
@@ -321,7 +322,6 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
         notes_parts.append(" ".join(reference_parts))
 
     normalized["notes"] = "\n".join(notes_parts)
-    normalized["unmapped_exchange_and_transaction_costs"] = details_exchange_and_transaction_costs
     normalized["unmapped_transaction_type"] = details_transaction_type or column_transaction_type
     normalized["unmapped_reference_parts"] = " ".join(reference_parts)
 
