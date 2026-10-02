@@ -226,6 +226,6 @@ one `POST /api/v1/transactions`.
   stop the run and leave files in place, alerted once per outage via
   `data/firefly-import-blocked.flag`; any other rejection fails only that row
   (to `data/failed/<ts>-<name>-import-failed.csv`) and the file moves to
-  `data/imported/` with an `-import-partial` suffix.
+  `data/imported/` as `<ts>-<name>-imported-partial.csv`.
 - **Dry run** — `--dry-run` runs the same decisions (including simulated
   transfer claims) without sending or moving anything.

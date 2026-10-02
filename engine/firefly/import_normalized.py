@@ -4,7 +4,7 @@ Import normalized CSVs from data/normalized/ into Firefly III via its REST API.
 One POST per transaction. Per file:
   - every row imported / already present -> file moved to data/imported/
   - some rows failed -> failed rows to data/failed/<ts>-<name>-import-failed.csv,
-    file moved to data/imported/ with an -import-partial suffix, alert on stderr
+    file moved to data/imported/ as -imported-partial, alert on stderr
   - Firefly unreachable or token refused -> run stops, file stays for the next run;
     alerted once per outage (flag file), not every cron minute
 
@@ -32,11 +32,10 @@ import os
 import re
 import shutil
 import sys
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from engine.core.duplicate_index import RUN_TS_FORMAT
 from engine.core.runtime import BASE_DIR, CONFIG, alert, log_event
 from engine.firefly.api import FireflyAuthError, FireflyClient, FireflyUnavailableError
 
@@ -198,13 +197,14 @@ def import_file(
     client: FireflyClient,
     assets: dict[str, dict[str, str]],
     pool: TransferPool,
-    run_ts: str,
     dry_run: bool,
     show: int,
 ) -> collections.Counter:
     name = os.path.basename(path)
-    stem = os.path.splitext(name)[0]
-    logfile = os.path.join(LOG_DIR, f"{run_ts}-import-{stem}.log")
+    # '<ts>-<name>-normalized[-partial].csv' -> '<ts>-<name>': every output keeps the
+    # normalizer's run timestamp, so all files of one bank CSV sort together
+    base = re.sub(r"-normalized(-partial)?$", "", os.path.splitext(name)[0])
+    logfile = os.path.join(LOG_DIR, f"{base}-import.log")
 
     def log(message: str) -> None:
         if dry_run:
@@ -274,15 +274,15 @@ def import_file(
     if dry_run:
         return counts
 
-    target_name = name
+    target_name = f"{base}-imported.csv"
     if failed:
-        failed_path = os.path.join(FAILED_DIR, f"{run_ts}-{stem}-import-failed.csv")
+        failed_path = os.path.join(FAILED_DIR, f"{base}-import-failed.csv")
         with open(failed_path, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=[*rows[0].keys(), "import_error"], delimiter=";")
             writer.writeheader()
             for row, reason in failed:
                 writer.writerow({**row, "import_error": reason})
-        target_name = f"{stem}-import-partial.csv"
+        target_name = f"{base}-imported-partial.csv"
         reasons = "\n".join(reason for _, reason in failed[:20])
         alert(
             f"FIREFLY IMPORT PARTIAL: {name} ({counts['failed']} of {len(rows)} rows failed)",
@@ -314,7 +314,6 @@ def main() -> int:
     if not files:
         return EXIT_OK
 
-    run_ts = datetime.now().strftime(RUN_TS_FORMAT)
     if not args.dry_run:
         for d in (IMPORTED_DIR, FAILED_DIR, LOG_DIR):
             os.makedirs(d, exist_ok=True)
@@ -327,7 +326,7 @@ def main() -> int:
         for path in files:
             if args.dry_run:
                 print(f"== {os.path.basename(path)}")
-            counts = import_file(path, client, assets, pool, run_ts, args.dry_run, args.show)
+            counts = import_file(path, client, assets, pool, args.dry_run, args.show)
             if args.dry_run:
                 print(f"  {dict(counts)}")
             totals.update(counts)

@@ -26,11 +26,11 @@ Runs unattended from a TrueNAS cron job.
 | `bank-csv-originals/` | Backup of every unique bank export; source for regenerating `data/` |
 | `data/incoming/` | Drop CSVs here to trigger processing |
 | `data/normalized/` | Normalized output waiting for import (timestamped) |
-| `data/imported/` | Normalized files after import (`-import-partial` suffix if rows failed) |
+| `data/imported/` | Normalized files after import: `<ts>-<name>-imported.csv` (`-imported-partial` if rows failed) |
 | `data/processed/` | Originals after processing (success / partial / failed) |
 | `data/failed/` | Rows that failed normalization, dedup, or import |
 | `data/duplicate-index/` | Per-account persistent dedup index (successfully normalized rows only) + backups rotated per account |
-| `data/logs/` | Per-run timestamped logs (normalizer and `-import-` logs) |
+| `data/logs/` | Per-run logs: `<ts>-<name>.log` (normalizer) and `<ts>-<name>-import.log`; `<ts>` = normalizer run, so all files of one bank CSV sort together |
 | `data/temp/` | Working files; cleaned up after each run |
 
 `config/app.env` exists only on the server (mode 600); the SFTP watcher
