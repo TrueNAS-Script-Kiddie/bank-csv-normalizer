@@ -33,7 +33,8 @@ ordered sequence. Each phase must succeed before the next begins:
 
 ## 2. Single Exit Path (`completion.finalize`)
 
-`finalize()` is the **only** place that calls `sys.exit()`. Every code path
+`finalize()` is the **only** place that calls `sys.exit()` (apart from the
+argument check at the top of `main()`). Every code path
 (normal, error, structure failure, row-level failure) calls it, guaranteeing
 that file moves, index commits, writer cleanup, backup rotation, temp cleanup,
 and the failure alert always happen together. Outcomes map 1:1 to exit codes and
@@ -41,8 +42,8 @@ destination subdirectories — see the step-numbered blocks inside `finalize`.
 
 ## 3. Configuration-Driven Bank Support
 
-All bank-specific behaviour lives in `config/<bank>.yaml`. The engine has
-zero hardcoded bank names. Key YAML sections (see [config/fintro.yaml](../../config/fintro.yaml)):
+Bank-specific behaviour lives in `config/<bank>.yaml` and
+`engine/banks/<bank>/`. `engine/core/` has zero hardcoded bank names. Key YAML sections (see [config/fintro.yaml](../../config/fintro.yaml)):
 
 - `columns.required` — expected headers with `names` (aliases), `regex`
   (per-cell validation), `filter` (exact-match allowlist), `filter_regex`.
@@ -108,11 +109,13 @@ written yet.
      GELDOPNEMING, old-card fallback).
 
   Each matched segment is removed from `remaining_details`. Anything left at
-  the end raises `ValueError`.
+  the end raises `ValueError`, unless that leftover text also occurs inside the
+  extracted description (a known gap in the check).
 
-**Phase 2 — Reconcile, reformat, assemble.** No regex or string parsing at
-this stage; only cross-source decisions, cosmetic replacement (via the
-`REPLACE_IN_*` tables in `normalize_row.py`), card-number masking, and final
+**Phase 2 — Reconcile, reformat, assemble.** No parsing of `details` at this
+stage; only cross-source decisions, cosmetic replacement (via the
+`REPLACE_IN_*` tables in `normalize_row.py`), card-number masking and
+exchange-cost formatting (two small regexes), and final
 assembly of the 16 `NORMALIZED_FIELDNAMES` defined in
 [engine/process_csv.py](../../engine/process_csv.py).
 
@@ -171,7 +174,8 @@ keeping the pipeline callable as a unit — see `main()` in
 
 All normalized output, processed originals, failed rows, logs, and
 duplicate-index backups include the run timestamp `YYYYMMDD-HHMMSS` in the
-filename. This makes concurrent runs distinguishable and provides a
+filename. The importer reuses it (`<ts>-<name>-imported.csv`,
+`<ts>-<name>-import.log`), so all files of one bank CSV sort together. This makes concurrent runs distinguishable and provides a
 complete audit trail without a database.
 
 Format constant `RUN_TS_FORMAT` is defined in
@@ -229,3 +233,7 @@ one `POST /api/v1/transactions`.
   `data/imported/` as `<ts>-<name>-imported-partial.csv`.
 - **Dry run** — `--dry-run` runs the same decisions (including simulated
   transfer claims) without sending or moving anything.
+- **Known bank coupling** — cash withdrawals are recognised by the Fintro
+  wording `geldopn` in `unmapped_transaction_type` (`build_split`); other banks'
+  cash withdrawals would get `(onbekend)`. When adding a second bank, let the
+  bank module mark cash withdrawals and have the importer read that mark.

@@ -28,13 +28,13 @@ Runs unattended from a TrueNAS cron job.
 | `data/normalized/` | Normalized output waiting for import (timestamped) |
 | `data/imported/` | Normalized files after import: `<ts>-<name>-imported.csv` (`-imported-partial` if rows failed) |
 | `data/processed/` | Originals after processing (success / partial / failed) |
-| `data/failed/` | Rows that failed normalization, dedup, or import |
+| `data/failed/` | Rows that failed normalization, dedup, or import; whole files bash moved after a crash |
 | `data/duplicate-index/` | Per-account persistent dedup index (successfully normalized rows only) + backups rotated per account |
 | `data/logs/` | Per-run logs: `<ts>-<name>.log` (normalizer) and `<ts>-<name>-import.log`; `<ts>` = normalizer run, so all files of one bank CSV sort together |
-| `data/temp/` | Working files; cleaned up after each run |
+| `data/temp/` | Working files; cleaned up after each run, except after a critical error (it then holds the index rollback copy) |
 
-`config/app.env` exists only on the server (mode 600); the SFTP watcher
-excludes it so the token never lands on the desktop.
+The token lives only in the server copy of `config/app.env` (mode 600); the
+SFTP watcher excludes that file, so a local copy is never uploaded over it.
 
 ## Running
 
@@ -86,7 +86,7 @@ Importer — [engine/firefly/import_normalized.py](engine/firefly/import_normali
 
 ## Firefly III Import
 
-One `POST /api/v1/transactions` per row (~1 s each), with
+One `POST /api/v1/transactions` per row (~0.5 s each), with
 `error_if_duplicate_hash`, so re-importing a file is safe. Row → split mapping
 lives in `build_split()`:
 
@@ -127,9 +127,8 @@ Gotchas:
 ## Hooks / Settings
 
 [.claude/settings.local.json](.claude/settings.local.json) only whitelists
-`ruff check`, `pre-commit run`, and `git add`/`git commit` for permission
-prompts. No PreToolUse/PostToolUse hooks are configured — the agent's workflow
-is not modified by the harness.
+`ruff check`, `pre-commit run`, and `git add` for permission prompts. No hooks
+are configured at project level.
 
 ## Additional Documentation
 

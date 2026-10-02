@@ -1,12 +1,12 @@
 """
 Completion module:
 Handles ALL end-of-processing operations:
-- Duplicate index update + backup + rotation
-- Moving normalized output
-- Moving original CSV
 - Closing open file handles
+- Duplicate index update + backup + atomic commit + rotation
+- Moving original CSV
+- Moving normalized output
 - Cleaning up the temp directory
-- Final log + email + exit
+- Final log + alert (on failure) + exit
 
 This module is the single exit path for the entire processing flow.
 """
@@ -25,9 +25,9 @@ from engine.core.runtime import alert
 
 
 # ---------------------------------------------------------------------------
-# Logging + email + exit
+# Logging + alert + exit
 # ---------------------------------------------------------------------------
-def log_email_exit(context: dict[str, Any], exit_code: int, message: str) -> None:
+def log_alert_exit(context: dict[str, Any], exit_code: int, message: str) -> None:
     """Write final log entry, alert on failure (stderr -> cron email), then exit."""
 
     log_event = context["log_event"]
@@ -118,7 +118,7 @@ def finalize(
                 duplicate_index_rows_to_add,
             )
     except Exception as e:
-        log_email_exit(
+        log_alert_exit(
             context,
             97,
             f"DUPLICATE INDEX PREP ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
@@ -143,7 +143,7 @@ def finalize(
         except Exception:
             pass
 
-        log_email_exit(
+        log_alert_exit(
             context,
             94,
             f"ORIGINAL CSV MOVE ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
@@ -171,7 +171,7 @@ def finalize(
         except Exception:
             pass
 
-        log_email_exit(
+        log_alert_exit(
             context,
             93,
             f"DUPLICATE INDEX COMMIT ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
@@ -203,7 +203,7 @@ def finalize(
         except Exception:
             pass
 
-        log_email_exit(
+        log_alert_exit(
             context,
             92,
             f"NORMALIZED OUTPUT MOVE ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
@@ -232,4 +232,4 @@ def finalize(
     # ----------------------------------------------------------------------
     # 7. Final log + alert + exit
     # ----------------------------------------------------------------------
-    log_email_exit(context, exit_code, message)
+    log_alert_exit(context, exit_code, message)

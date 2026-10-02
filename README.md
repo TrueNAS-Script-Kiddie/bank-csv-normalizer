@@ -44,8 +44,9 @@ bank-csv-normalizer/
 
 ## How It Works
 
-1. Bash script runs (cron or manually) and takes an exclusive `flock`; a
-   second instance exits immediately.
+1. Bash script runs (cron or manually). With no CSV in `incoming/` or
+   `normalized/` it exits at once (builtins only); otherwise it takes an
+   exclusive `flock`, and a second instance exits immediately.
 2. For each CSV in `data/incoming/`:
    - Skips a file until nothing has touched it for 30 s (its `ctime`, which
      copies with a preserved date still bump) and its last line is complete;
@@ -61,7 +62,7 @@ bank-csv-normalizer/
    outcome code (`0`, `65`, `75`, `92–97`, `99`).
 5. After all incoming files, still under the lock, the importer
    (`engine.firefly.import_normalized`) sends every row in `data/normalized/`
-   to Firefly III, one API call per transaction (~1 s each), and moves each
+   to Firefly III, one API call per transaction (~0.5 s each), and moves each
    file to `data/imported/`. Failed rows go to `data/failed/`. Firefly being
    down or refusing the token blocks the import (one alert per outage) and
    leaves the files for the next run. See `CLAUDE.md` → "Firefly III Import"
@@ -120,4 +121,4 @@ list keeps dev files, caches and `config/app.env` off the server.
 
 ## License
 
-Private project — no public license.
+MIT — see [LICENSE](LICENSE).

@@ -1,9 +1,9 @@
 """
 CSV runtime helpers:
-- CSV loading
-- CSV structure validation
-- Key extraction
+- CSV loading (encoding + delimiter detection)
 - Writer creation
+- Failed-row writing
+- Bank config loading
 - Path construction for a single pipeline run
 
 This module contains all CSV-related runtime infrastructure.
