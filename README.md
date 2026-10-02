@@ -21,7 +21,7 @@ Designed for unattended cron execution on TrueNAS or any Linux host.
 
 ```
 bank-csv-normalizer/
-├── bank-csv-normalizer.bash       # Cron entry (flock, size-stability check)
+├── bank-csv-normalizer.bash       # Cron entry (flock, upload check)
 ├── engine/
 │   ├── process_csv.py             # Normalizer entry point
 │   ├── core/                      # csv_runtime, csv_validation,
@@ -47,8 +47,9 @@ bank-csv-normalizer/
 1. Bash script runs (cron or manually) and takes an exclusive `flock`; a
    second instance exits immediately.
 2. For each CSV in `data/incoming/`:
-   - Waits 2 s and compares file size twice; skips the file if still growing
-     (guards against partial SFTP uploads).
+   - Skips a file until nothing has touched it for 30 s (its `ctime`, which
+     copies with a preserved date still bump) and its last line is complete;
+     the next cron run retries. Guards against half-copied uploads.
    - Creates a timestamped logfile in `data/logs/`.
    - Invokes `python3 -m engine.process_csv <csv> <timestamp> <logfile>`.
 3. The Python engine loads the CSV, auto-detects the bank, validates and
@@ -70,7 +71,7 @@ bank-csv-normalizer/
 
 - Python 3.10+
 - `pyyaml` (all other runtime deps are stdlib)
-- Bash, `stat`, `mv`, `flock`
+- Bash, `stat`, `tail`, `mv`, `flock`
 - A Firefly III Personal Access Token in `config/app.env`
 
 ## Running

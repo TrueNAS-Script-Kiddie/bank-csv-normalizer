@@ -2,7 +2,10 @@ columns:
   required:
     external_id:
       names: ["Volgnummer"]
-      filter_regex: "^[0-9]{4}-[0-9]+$"
+      # Drop only pending rows ('2026-', no number yet: final in a later export);
+      # anything else malformed fails validation instead of vanishing
+      filter_regex: "^(?![0-9]{4}-$).*$"
+      regex: "^[0-9]{4}-[0-9]+$"
 
     primary_transaction_date:
       names: ["Uitvoeringsdatum"]

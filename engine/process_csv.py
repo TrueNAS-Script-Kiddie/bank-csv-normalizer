@@ -11,7 +11,6 @@ from engine.core.csv_runtime import (
     ensure_writer,
     load_all_bank_configs,
     load_csv_rows,
-    load_normalized_rows,
     write_failed_row,
 )
 from engine.core.csv_validation import (
@@ -121,7 +120,6 @@ def main() -> None:
                 context,
                 exit_code=65,
                 outcome="structure_failed",
-                normalized_rows=None,
                 message="CSV EMPTY",
             )
             return
@@ -136,7 +134,6 @@ def main() -> None:
                 context,
                 exit_code=65,
                 outcome="structure_failed",
-                normalized_rows=None,
                 message=f"BANK AUTODETECT FAILED: {exc}",
             )
             return
@@ -152,7 +149,10 @@ def main() -> None:
         # -----------------------------------------------------------------
         # Validate + map + filter rows
         # -----------------------------------------------------------------
-        validated_rows, column_map = validate_and_prepare(csv_rows, bank_cfg)
+        validated_rows, column_map, filtered = validate_and_prepare(csv_rows, bank_cfg)
+        if filtered:
+            reasons = ", ".join(f"{count}x {reason}" for reason, count in filtered.most_common())
+            log_event(logfile_path, f"Filtered {sum(filtered.values())} rows: {reasons}")
         log_event(logfile_path, f"Validated {len(validated_rows)} rows after filtering")
 
         if not validated_rows:
@@ -160,8 +160,18 @@ def main() -> None:
                 context,
                 exit_code=65,
                 outcome="structure_failed",
-                normalized_rows=None,
                 message="NO VALID ROWS AFTER VALIDATION",
+            )
+            return
+
+        # Every row invalid → the export format changed; reject the file as a whole
+        first_valid_row = next((r for r in validated_rows if "_validation_error" not in r), None)
+        if first_valid_row is None:
+            completion.finalize(
+                context,
+                exit_code=65,
+                outcome="structure_failed",
+                message=f"ALL ROWS FAILED VALIDATION, first: {validated_rows[0]['_validation_error']}",
             )
             return
 
@@ -172,14 +182,32 @@ def main() -> None:
         # -----------------------------------------------------------------
         partition_by = bank_cfg.get("duplicate_key", {}).get("partition_by")
         if partition_by:
-            partition_value = validated_rows[0].get(partition_by, "").replace(" ", "").upper()
+            partition_value = first_valid_row.get(partition_by, "").replace(" ", "").upper()
             if not partition_value:
                 completion.finalize(
                     context,
                     exit_code=65,
                     outcome="structure_failed",
-                    normalized_rows=None,
-                    message=f"DUPLICATE INDEX: partition_by column '{partition_by}' is empty in first row",
+                    message=f"DUPLICATE INDEX: partition_by column '{partition_by}' is empty in first valid row",
+                )
+                return
+            # One index per account: a file mixing accounts would be checked against the wrong one
+            partition_values = sorted(
+                {
+                    r.get(partition_by, "").replace(" ", "").upper()
+                    for r in validated_rows
+                    if "_validation_error" not in r
+                }
+            )
+            if len(partition_values) > 1:
+                completion.finalize(
+                    context,
+                    exit_code=65,
+                    outcome="structure_failed",
+                    message=(
+                        f"CSV contains several values for '{partition_by}' ({', '.join(partition_values)}); "
+                        "export one file per account"
+                    ),
                 )
                 return
             index_filename = f"{partition_value}-duplicate-index.csv"
@@ -227,12 +255,25 @@ def main() -> None:
         # -----------------------------------------------------------------
         for row in validated_rows:
             original_csv_row = row.get("_original_csv_row", row)
+            # Same shape as the duplicate index, for side-by-side comparison; the
+            # original row is only needed by the normalize-failed output
+            duplicate_failed_row = {k: v for k, v in row.items() if k != "_original_csv_row"}
+
+            # Row with a cell that failed regex validation: no dedup, no index
+            if "_validation_error" in row:
+                failed_any = True
+                write_failed_row(paths["failed_normalize_csv"], normalize_failed_ref, original_csv_row)
+                log_event(
+                    logfile_path,
+                    f"Validation failed on source row {row.get('_source_line', '?')}: {row['_validation_error']}",
+                )
+                continue
 
             # Extract duplicate key
             key = extract_duplicate_key(row, bank_cfg)
             if not key:
                 failed_any = True
-                write_failed_row(paths["failed_duplicate_csv"], duplicate_failed_ref, row)
+                write_failed_row(paths["failed_duplicate_csv"], duplicate_failed_ref, duplicate_failed_row)
                 log_event(logfile_path, f"Missing duplicate_key for row: {row}")
                 continue
 
@@ -245,20 +286,11 @@ def main() -> None:
 
             if status == "conflict":
                 failed_any = True
-                write_failed_row(paths["failed_duplicate_csv"], duplicate_failed_ref, row)
+                write_failed_row(paths["failed_duplicate_csv"], duplicate_failed_ref, duplicate_failed_row)
                 log_event(logfile_path, f"DUPLICATE key (non-identical) {key}")
                 continue
 
-            # NEW ROW → add to duplicate-index list
-            duplicate_index_row = {"duplicate_key": key}
-            for field in duplicate_index_required_fields:
-                duplicate_index_row[field] = row.get(field, "")
-            duplicate_index_rows_to_add.append(duplicate_index_row)
-
-            # Update in-memory duplicate index so later rows see this one
-            duplicate_index.setdefault(key, []).append(duplicate_index_row)
-
-            # Normalize row
+            # NEW ROW → normalize
             try:
                 normalized_row = bank_module.normalize_row(row)
             except Exception as exc:
@@ -274,6 +306,16 @@ def main() -> None:
                     f"Normalize failed on source row {row.get('_source_line', '?')}: {exc}",
                 )
                 continue
+
+            # Only successfully normalized rows enter the duplicate index, so a
+            # failed row is retried when its CSV is processed again
+            duplicate_index_row = {"duplicate_key": key}
+            for field in duplicate_index_required_fields:
+                duplicate_index_row[field] = row.get(field, "")
+            duplicate_index_rows_to_add.append(duplicate_index_row)
+
+            # Update in-memory duplicate index so later rows see this one
+            duplicate_index.setdefault(key, []).append(duplicate_index_row)
 
             # Valid normalized row
             normalized_any = True
@@ -292,7 +334,6 @@ def main() -> None:
                 context,
                 exit_code=65,
                 outcome="all_failed",
-                normalized_rows=None,
                 message="CSV ALL FAILED",
             )
             return
@@ -302,7 +343,6 @@ def main() -> None:
                 context,
                 exit_code=75,
                 outcome="partial",
-                normalized_rows=load_normalized_rows(paths["temp_normalized_csv"]),
                 message="CSV PARTIAL SUCCESS",
             )
             return
@@ -312,7 +352,6 @@ def main() -> None:
                 context,
                 exit_code=0,
                 outcome="success",
-                normalized_rows=load_normalized_rows(paths["temp_normalized_csv"]),
                 message="CSV SUCCESS",
             )
             return
@@ -322,7 +361,6 @@ def main() -> None:
                 context,
                 exit_code=0,
                 outcome="all_full_duplicates",
-                normalized_rows=None,
                 message="CSV ALL FULL DUPLICATES",
             )
 
@@ -331,7 +369,6 @@ def main() -> None:
             context,
             exit_code=99,
             outcome="error",
-            normalized_rows=None,
             message=f"UNEXPECTED ERROR: {e}\n\nTraceback:\n{traceback.format_exc()}",
         )
 

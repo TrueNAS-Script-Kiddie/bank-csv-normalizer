@@ -117,45 +117,37 @@ def rotate_duplicate_backups(
     logfile_path: str,
 ) -> None:
     """
-    Rotate old duplicate-index backups based on age and count.
+    Rotate old duplicate-index backups by age and count, per account.
+    Backup names: <run_ts>-<csv name>-<partition>-duplicate-index.csv.
+    The newest backup of an account is always kept.
     Logs only on error. Never interrupts the processing flow.
     """
+    suffix = "-duplicate-index.csv"
     try:
         if not os.path.exists(backup_dir):
             return
 
-        backup_files = []
+        backups_per_partition: defaultdict[str, list[tuple[datetime, str]]] = defaultdict(list)
 
         for filename in os.listdir(backup_dir):
-            if filename.endswith("-duplicate-index.csv"):
-                ts_part = filename[: -len("-duplicate-index.csv")]
-                try:
-                    timestamp = datetime.strptime(ts_part, RUN_TS_FORMAT)
-                    backup_files.append((timestamp, filename))
-                except ValueError:
-                    # Ignore files that don't match the timestamp format
-                    continue
+            if not filename.endswith(suffix):
+                continue
+            try:
+                timestamp = datetime.strptime(filename[:15], RUN_TS_FORMAT)
+            except ValueError:
+                # Ignore files that don't start with a run timestamp
+                continue
+            partition = filename[: -len(suffix)].rsplit("-", 1)[-1]
+            backups_per_partition[partition].append((timestamp, filename))
 
-        # Sort oldest → newest
-        backup_files.sort(key=lambda x: x[0])
-
-        # Remove backups older than MAX_BACKUP_AGE_DAYS
         cutoff = datetime.now() - timedelta(days=MAX_BACKUP_AGE_DAYS)
-        kept = []
 
-        for timestamp, filename in backup_files:
-            if timestamp < cutoff:
-                try:
-                    os.remove(os.path.join(backup_dir, filename))
-                except Exception as exc:
-                    log_event(logfile_path, f"[ROTATION ERROR] {exc}")
-            else:
-                kept.append((timestamp, filename))
-
-        # Enforce MAX_BACKUPS
-        if len(kept) > MAX_BACKUPS:
-            excess = len(kept) - MAX_BACKUPS
-            for _, filename in kept[:excess]:
+        for backups in backups_per_partition.values():
+            # Newest first; index 0 is always kept
+            backups.sort(reverse=True)
+            for position, (timestamp, filename) in enumerate(backups):
+                if position == 0 or (position < MAX_BACKUPS and timestamp >= cutoff):
+                    continue
                 try:
                     os.remove(os.path.join(backup_dir, filename))
                 except Exception as exc:

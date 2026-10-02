@@ -8,7 +8,7 @@ Runs unattended from a TrueNAS cron job.
 ## Tech Stack
 
 - **Python 3.10+** — processing engine ([engine/](engine/))
-- **Bash** — cron-safe orchestrator with `flock` and size-stability check
+- **Bash** — cron-safe orchestrator with `flock` and upload check (ctime ≥ 30 s + complete last line); idle runs use builtins only
 - **YAML** — per-bank configuration ([config/](config/))
 - **Dependencies** — Python stdlib + `pyyaml` only (no build step; the Firefly client uses `urllib`)
 
@@ -22,14 +22,14 @@ Runs unattended from a TrueNAS cron job.
 | [engine/banks/fintro/](engine/banks/fintro/) | Reference bank: `normalize_row`, `extract_details`, `parsers`, `reconcile` |
 | [engine/firefly/](engine/firefly/) | Firefly III import: `api` (REST client), `import_normalized` (importer) |
 | [config/](config/) | `<bank>.yaml` configs (bank name is the filename) + `app.env` (`FIREFLY_URL`, `FIREFLY_TOKEN`) |
-| [bank-csv-normalizer.bash](bank-csv-normalizer.bash) | Cron entry; `flock`, size-stability check, normalizes each incoming CSV, then runs the importer |
+| [bank-csv-normalizer.bash](bank-csv-normalizer.bash) | Cron entry; `flock`, upload check (ctime ≥ 30 s + complete last line), normalizes each incoming CSV, then runs the importer |
 | `bank-csv-originals/` | Backup of every unique bank export; source for regenerating `data/` |
 | `data/incoming/` | Drop CSVs here to trigger processing |
 | `data/normalized/` | Normalized output waiting for import (timestamped) |
 | `data/imported/` | Normalized files after import (`-import-partial` suffix if rows failed) |
 | `data/processed/` | Originals after processing (success / partial / failed) |
 | `data/failed/` | Rows that failed normalization, dedup, or import |
-| `data/duplicate-index/` | Per-account persistent dedup index + rotated backups |
+| `data/duplicate-index/` | Per-account persistent dedup index (successfully normalized rows only) + backups rotated per account |
 | `data/logs/` | Per-run timestamped logs (normalizer and `-import-` logs) |
 | `data/temp/` | Working files; cleaned up after each run |
 

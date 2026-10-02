@@ -45,6 +45,16 @@ def log_email_exit(context: dict[str, Any], exit_code: int, message: str) -> Non
 
 
 # ---------------------------------------------------------------------------
+# Atomic copy
+# ---------------------------------------------------------------------------
+def copy_atomically(source: str, target: str) -> None:
+    """Copy via a temp file + rename, so target is never left half-written."""
+    temp_target = f"{target}.tmp"
+    shutil.copyfile(source, temp_target)
+    os.replace(temp_target, target)
+
+
+# ---------------------------------------------------------------------------
 # Close all open writers
 # ---------------------------------------------------------------------------
 def close_open_writers(context: dict[str, Any]) -> None:
@@ -65,7 +75,6 @@ def finalize(
     context: dict[str, Any],
     exit_code: int,
     outcome: str,
-    normalized_rows: list[dict[str, Any]] | None,
     message: str,
 ) -> None:
     """
@@ -84,14 +93,23 @@ def finalize(
     duplicate_index_rows_to_add: list[dict[str, Any]] = context.get("duplicate_index_rows_to_add", [])
 
     # ----------------------------------------------------------------------
-    # 1. Prepare duplicate-index update (not critical)
+    # 0. Close writers before any file is moved: a file must not move while
+    #    open (Windows refuses, other filesystems may truncate). Also covers
+    #    the critical exits below, which stop before the end.
+    # ----------------------------------------------------------------------
+    close_open_writers(context)
+
+    # ----------------------------------------------------------------------
+    # 1. Prepare duplicate-index update (critical: without it the rows would
+    #    be normalized but never recorded, and reprocessed next time)
     # ----------------------------------------------------------------------
     updated_duplicate_index = None
 
     try:
         # Only prepare an updated duplicate-index snapshot when there are
-        # new rows to add. Full-duplicate-only runs do not change the index.
-        if duplicate_index_rows_to_add:
+        # new rows to add and their normalized output is kept. A crashed run
+        # discards its output, so its rows must not be marked as seen.
+        if duplicate_index_rows_to_add and outcome in ("success", "partial"):
             updated_duplicate_index = create_updated_duplicate_index(
                 paths["duplicate_index_csv"],
                 paths["duplicate_index_backup_dir"],
@@ -145,7 +163,7 @@ def finalize(
             else:
                 open(paths["duplicate_index_previous_csv"], "w", encoding="utf-8").close()
 
-            shutil.copyfile(updated_duplicate_index, paths["duplicate_index_csv"])
+            copy_atomically(updated_duplicate_index, paths["duplicate_index_csv"])
 
     except Exception as e:
         try:
@@ -176,10 +194,7 @@ def finalize(
     except Exception as e:
         if os.path.exists(paths["duplicate_index_previous_csv"]):
             try:
-                shutil.copyfile(
-                    paths["duplicate_index_previous_csv"],
-                    paths["duplicate_index_csv"],
-                )
+                copy_atomically(paths["duplicate_index_previous_csv"], paths["duplicate_index_csv"])
             except Exception:
                 pass
 
@@ -207,12 +222,7 @@ def finalize(
         pass
 
     # ----------------------------------------------------------------------
-    # 6. Close writers
-    # ----------------------------------------------------------------------
-    close_open_writers(context)
-
-    # ----------------------------------------------------------------------
-    # 7. Cleanup temp directory
+    # 6. Cleanup temp directory
     # ----------------------------------------------------------------------
     try:
         shutil.rmtree(paths["temp_dir"], ignore_errors=True)
@@ -220,6 +230,6 @@ def finalize(
         pass
 
     # ----------------------------------------------------------------------
-    # 8. Final log + email + exit
+    # 7. Final log + alert + exit
     # ----------------------------------------------------------------------
     log_email_exit(context, exit_code, message)

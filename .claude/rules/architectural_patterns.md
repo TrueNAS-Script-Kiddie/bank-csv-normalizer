@@ -17,7 +17,10 @@ ordered sequence. Each phase must succeed before the next begins:
 2. **Autodetect bank** — match CSV headers against all loaded YAML configs
    (`autodetect_bank` in [engine/core/csv_validation.py](../../engine/core/csv_validation.py)).
 3. **Validate & map** — remap CSV columns to internal names, apply `filter` /
-   `filter_regex`, then `regex` validation (`validate_and_prepare`).
+   `filter_regex` (dropped rows are counted and logged per reason), then `regex`
+   validation (`validate_and_prepare`). A row with a failing cell is marked, not
+   fatal: it goes to normalize-failed in the loop. Only all rows failing, or a
+   file mixing several `partition_by` values, rejects the file (exit 65).
 4. **Resolve account-specific dedup-index path** — from `duplicate_key.partition_by`.
 5. **Load dedup index** — per-account persistent CSV
    (`load_duplicate_index` in [engine/core/duplicate_index.py](../../engine/core/duplicate_index.py)).
@@ -116,9 +119,11 @@ assembly of the 16 `NORMALIZED_FIELDNAMES` defined in
 ## 7. Stateful In-Memory + Persistent Dedup Index
 
 The dedup index is a `defaultdict[str, list[dict]]` loaded from a per-account
-CSV at the start of each run. New rows are appended to the in-memory dict
-during the loop so that intra-batch duplicates are caught before the index is
-committed.
+CSV at the start of each run. A row enters the index only after
+`normalize_row` succeeded, so failed rows are retried when their CSV is
+processed again. New rows are appended to the in-memory dict during the loop so
+that intra-batch duplicates are caught before the index is committed, which
+happens only for `success` / `partial` runs.
 
 The index filename is `<partition_value>-duplicate-index.csv` (e.g.
 `BE12345678901234-duplicate-index.csv`), derived from
@@ -131,9 +136,10 @@ returns:
 - `identical` — key seen, all required fields match → silently skip.
 - `conflict` — key seen, required fields differ → write to duplicate-failed.
 
-The index is committed atomically at the end: snapshot (timestamped copy in
-`backups/`) → copy-to-live → rotate backups (`rotate_duplicate_backups`,
-capped at `MAX_BACKUPS=50` and `MAX_BACKUP_AGE_DAYS=365`). A rollback copy
+The index is committed at the end: snapshot (timestamped copy in
+`backups/`) → atomic copy-to-live (temp file + `os.replace`, `copy_atomically`)
+→ rotate backups (`rotate_duplicate_backups`, per account: at most
+`MAX_BACKUPS=50`, none older than `MAX_BACKUP_AGE_DAYS=365`, newest always kept). A rollback copy
 (`previous-duplicate-index.csv` in `data/temp/`) allows recovery if the
 normalized-output move fails — see step 4 of `finalize`.
 
@@ -142,8 +148,8 @@ normalized-output move fails — see step 4 of `finalize`.
 The step-numbered blocks inside `finalize()` in
 [engine/core/completion.py](../../engine/core/completion.py) distinguish:
 
-- **Non-critical** (wrap in try/except, log, continue): duplicate-index
-  prep, backup rotation, temp cleanup, logging itself.
+- **Non-critical** (wrap in try/except, log, continue): backup rotation,
+  temp cleanup, logging itself.
 - **Critical** (attempt compensating move, alert, exit): original CSV move
   (exit 94), duplicate-index commit (93), normalized output move (92),
   duplicate-index prep (97).
@@ -181,8 +187,11 @@ and consumed by `build_paths` in [engine/core/csv_runtime.py](../../engine/core/
 - Exclusive `flock` on `.process.lock` for the whole run (normalizer and
   importer); a second instance exits at once, and the kernel drops the lock
   when the process dies, so a crash or reboot cannot leave a stale lock.
-- **Size-stability check** — `stat` twice with a 2s sleep; skip if the file
-  is still growing (defends against partial SFTP uploads).
+- **Upload check** — skip a file until its `ctime` is ≥ 30 s old (Explorer and
+  `cp -p` keep an old mtime, but every write bumps ctime) and its last byte is a
+  newline; after 10 min process anyway so a broken file gets reported.
+- **Idle runs** exit before the lock when `incoming/` and `normalized/` hold no
+  CSV: builtins only, no Python.
 - Exit codes `0/65/75/99` are "Python handled it"; anything else triggers a
   fallback move of the incoming file to `data/failed/`.
 - Runs every minute; alerts go to stderr, which the TrueNAS cron job emails.

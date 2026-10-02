@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 from typing import Any
 
 
@@ -7,19 +8,21 @@ from typing import Any
 # ---------------------------------------------------------------------------
 def validate_and_prepare(
     csv_rows: list[dict[str, str]], bank_config: dict[str, Any]
-) -> tuple[list[dict[str, Any]], dict[str, str]]:
+) -> tuple[list[dict[str, Any]], dict[str, str], Counter[str]]:
     """
     Validate CSV structure, apply filtering rules, and map CSV column names
     to internal field names based on the bank configuration.
 
     Returns:
-        (validated_rows, column_map)
+        (validated_rows, column_map, filtered)
 
         validated_rows: list of rows with internal field names
         column_map: mapping from internal_name -> actual CSV column name
+        filtered: count of rows dropped by filter / filter_regex, per "column 'value'"
 
     Raises:
-        ValueError: if required columns are missing or regex validation fails.
+        ValueError: if required columns are missing. A row failing regex
+        validation is returned with a "_validation_error" message instead.
     """
 
     if not csv_rows:
@@ -63,6 +66,7 @@ def validate_and_prepare(
     # 2. Validate rows + apply filtering + regex checks
     # ----------------------------------------------------------------------
     validated_rows: list[dict[str, str]] = []
+    filtered: Counter[str] = Counter()
 
     for source_line, raw_row in enumerate(csv_rows, start=2):  # start=2: row 1 is the header
         mapped_row: dict[str, Any] = {}
@@ -72,35 +76,34 @@ def validate_and_prepare(
             mapped_row[internal_name] = raw_row.get(csv_name, "").strip()
 
         # Apply filter rules (exact-match list or regex)
-        skip_row = False
+        skip_reason = None
         for internal_name, cfg in columns_cfg["required"].items():
-            if "filter" in cfg:
-                if mapped_row[internal_name] not in cfg["filter"]:
-                    skip_row = True
-                    break
-            if "filter_regex" in cfg:
-                if not re.fullmatch(cfg["filter_regex"], mapped_row[internal_name]):
-                    skip_row = True
-                    break
+            value = mapped_row[internal_name]
+            if ("filter" in cfg and value not in cfg["filter"]) or (
+                "filter_regex" in cfg and not re.fullmatch(cfg["filter_regex"], value)
+            ):
+                skip_reason = f"{internal_name} '{value}'"
+                break
 
-        if skip_row:
+        if skip_reason:
+            filtered[skip_reason] += 1
             continue
 
-        # Regex validation
+        # Regex validation: mark the row instead of failing the whole file;
+        # process_csv routes marked rows to the normalize-failed output
         for internal_name, cfg in columns_cfg["required"].items():
-            if "regex" in cfg:
-                pattern = re.compile(cfg["regex"])
-                if not pattern.match(mapped_row[internal_name]):
-                    raise ValueError(
-                        f"Column '{internal_name}' failed regex validation: "
-                        f"value='{mapped_row[internal_name]}' regex='{cfg['regex']}'"
-                    )
+            if "regex" in cfg and not re.match(cfg["regex"], mapped_row[internal_name]):
+                mapped_row["_validation_error"] = (
+                    f"Column '{internal_name}' failed regex validation: "
+                    f"value='{mapped_row[internal_name]}' regex='{cfg['regex']}'"
+                )
+                break
 
         mapped_row["_source_line"] = source_line
         mapped_row["_original_csv_row"] = raw_row
         validated_rows.append(mapped_row)
 
-    return validated_rows, column_map
+    return validated_rows, column_map, filtered
 
 
 # ---------------------------------------------------------------------------

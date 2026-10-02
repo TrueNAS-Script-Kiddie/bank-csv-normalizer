@@ -4,13 +4,13 @@ CSV runtime helpers:
 - CSV structure validation
 - Key extraction
 - Writer creation
-- Loading normalized rows
 - Path construction for a single pipeline run
 
 This module contains all CSV-related runtime infrastructure.
 Nothing more, nothing less.
 """
 
+import codecs
 import csv
 import os
 from typing import Any
@@ -76,14 +76,21 @@ def build_paths(
 # ---------------------------------------------------------------------------
 # Load CSV
 # ---------------------------------------------------------------------------
+class SemicolonDialect(csv.excel):
+    """Fallback dialect; a subclass, so the shared csv.excel stays untouched."""
+
+    delimiter = ";"
+
+
 def load_csv_rows(csv_file_path: str) -> list[dict[str, str]]:
     """
     Load CSV rows into a list of dictionaries.
 
     Encoding strategy:
-    - Try UTF-8 first (most common)
+    - UTF-16 (Excel "Unicode Text") when the file starts with its byte-order mark;
+      cp1252 decodes almost any bytes, so it cannot be a fallback after cp1252
+    - Otherwise UTF-8 first (most common)
     - Fallback to Windows-1252 (most common non-UTF-8 in BE/NL)
-    - Fallback to UTF-16 (Excel "Unicode Text")
 
     Delimiter strategy:
     - Auto-detect via csv.Sniffer()
@@ -96,7 +103,9 @@ def load_csv_rows(csv_file_path: str) -> list[dict[str, str]]:
     # ------------------------------------------------------------
     # 1. Try reading file with different encodings
     # ------------------------------------------------------------
-    encodings_to_try = ["utf-8-sig", "cp1252", "utf-16"]
+    with open(csv_file_path, "rb") as f:
+        starts_with_utf16_bom = f.read(2) in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)
+    encodings_to_try = ["utf-16"] if starts_with_utf16_bom else ["utf-8-sig", "cp1252"]
 
     file_text = None
     used_encoding = None
@@ -111,7 +120,7 @@ def load_csv_rows(csv_file_path: str) -> list[dict[str, str]]:
             continue
 
     if file_text is None:
-        raise ValueError("Unable to decode CSV file with utf-8, cp1252, or utf-16.")
+        raise ValueError(f"Unable to decode CSV file with {', '.join(encodings_to_try)}.")
 
     # ------------------------------------------------------------
     # 2. Detect delimiter
@@ -119,8 +128,7 @@ def load_csv_rows(csv_file_path: str) -> list[dict[str, str]]:
     try:
         detected_dialect = csv.Sniffer().sniff(file_text[:4096])
     except csv.Error:
-        detected_dialect = csv.excel
-        detected_dialect.delimiter = ";"
+        detected_dialect = SemicolonDialect
 
     # ------------------------------------------------------------
     # 3. Parse CSV using detected encoding + dialect
@@ -158,15 +166,6 @@ def write_failed_row(path: str, writer_ref: dict[str, Any], row: dict[str, Any])
     """Write a failed row to the given CSV file."""
     writer = ensure_writer(path, writer_ref, list(row.keys()))
     writer.writerow(row)
-
-
-# ---------------------------------------------------------------------------
-# Load normalized rows
-# ---------------------------------------------------------------------------
-def load_normalized_rows(path: str) -> list[dict[str, Any]]:
-    """Load all normalized rows from a temporary output file."""
-    with open(path, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f, delimiter=";"))
 
 
 # ---------------------------------------------------------------------------
