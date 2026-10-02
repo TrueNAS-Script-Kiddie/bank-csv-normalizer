@@ -21,14 +21,14 @@ from engine.core.duplicate_index import (
     create_updated_duplicate_index,
     rotate_duplicate_backups,
 )
-from engine.core.runtime import send_email
+from engine.core.runtime import alert
 
 
 # ---------------------------------------------------------------------------
 # Logging + email + exit
 # ---------------------------------------------------------------------------
 def log_email_exit(context: dict[str, Any], exit_code: int, message: str) -> None:
-    """Write final log entry, send email, then exit."""
+    """Write final log entry, alert on failure (stderr -> cron email), then exit."""
 
     log_event = context["log_event"]
     logfile_path = context["logfile_path"]
@@ -37,15 +37,9 @@ def log_email_exit(context: dict[str, Any], exit_code: int, message: str) -> Non
 
     log_event(logfile_path, message)
 
-    subject = message
-    body = f"File: {csv_filename}\nTimestamp: {run_timestamp}\n{message}"
-
-    send_email(
-        subject=subject,
-        body=body,
-        log_event=log_event,
-        logfile_path=logfile_path,
-    )
+    if exit_code != 0:
+        subject, _, detail = message.partition("\n")
+        alert(subject, f"File: {csv_filename}\nTimestamp: {run_timestamp}\nLog: {logfile_path}\n{detail}".rstrip())
 
     sys.exit(exit_code)
 

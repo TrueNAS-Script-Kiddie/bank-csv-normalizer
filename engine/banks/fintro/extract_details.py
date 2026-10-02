@@ -13,7 +13,7 @@ The order is determined by parsing reliability, not by the output schema.
 import re
 from typing import Any
 
-from engine.banks.fintro.parsers import parse_ddmmyyyy, parse_iban
+from engine.banks.fintro.parsers import parse_ddmmyyyy, parse_ddmmyyyy_time, parse_iban
 
 # Reused by multiple blocks below (DOORLOPENDE OPDRACHT, OVERSCHRIJVING, MOBIELE BETALING).
 RE_IBAN_BIC = re.compile(
@@ -133,7 +133,7 @@ def extract_details(details: str, primary_transaction_date_iso: str) -> dict[str
     if match:
         details_match_type = "Storting"
         details_opposing_account_name = match.group(3).strip()
-        details_payment_date = match.group(6).strip()
+        details_payment_date = parse_ddmmyyyy_time(match.group(6), None)
         details_transaction_type = match.group(1) + match.group(4) + match.group(5)
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
@@ -248,8 +248,7 @@ def extract_details(details: str, primary_transaction_date_iso: str) -> dict[str
             + match.group(1).strip()
         ).strip()
         details_opposing_account_name = match.group(3).strip()
-        time_part = ((match.group(7) or "").replace(" U ", ":") or "00:00").strip()
-        details_payment_date = match.group(5).strip() + " " + time_part
+        details_payment_date = parse_ddmmyyyy_time(match.group(5), match.group(7))
         details_exchange_and_transaction_costs = match.group(8).strip()
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
@@ -299,8 +298,7 @@ def extract_details(details: str, primary_transaction_date_iso: str) -> dict[str
             (match.group(6) or "").strip() + " " + (match.group(1) + match.group(2)).strip()
         ).strip()
         details_opposing_account_name = match.group(3).strip()
-        time_part = ((match.group(5) or "").replace(" U ", ":") or "00:00").strip()
-        details_payment_date = match.group(4).strip() + " " + time_part
+        details_payment_date = parse_ddmmyyyy_time(match.group(4), match.group(5))
         remaining_details = remaining_details.replace(match.group(0), "").strip()
 
     # Old transactions -> details_transaction_type, details_opposing_account_name

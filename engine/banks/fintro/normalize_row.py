@@ -112,6 +112,22 @@ REPLACE_IN_COLUMN_TRANSACTION_TYPE = [
     ("Geldopname met kaart", "Geldopneming met debetkaart"),
 ]
 
+# 'Type verrichting' values of transactions with Fintro itself (loans, fees, interest, bonus).
+# Fintro leaves the counterparty empty for these.
+BANK_COUNTERPARTY_NAME = "Fintro"
+BANK_COUNTERPARTY_TRANSACTION_TYPES = {
+    "Aflossing krediet",
+    "Diverse correcties",
+    "Diverse Debetverrichtingen",
+    "Effecteninschrijving",
+    "Hypotheekleningen Terugbetalingen",
+    "Interesten op zichtrekening",
+    "Kosten diverse verrichtingen",
+    "Kosten in verband met de rekening",
+    "Kosten rekeningbeheer",
+    "Terugbetalingen",
+}
+
 REPLACE_IN_DETAILS_TECHNICAL_REFERENCE = [
     ("MANDAAT NUMMER :", "Mandaat nummer:"),
     ("REFERTE OPDRACHTGEVER :", "Referte opdrachtgever:"),
@@ -227,6 +243,12 @@ def normalize_row(csv_row: dict[str, str]) -> dict[str, Any]:
     normalized["opposing_account_name"] = merge_opposing_account_name(
         column_opposing_account_name, details["opposing_account_name"]
     )
+    if (
+        not normalized["opposing_account_name"]
+        and not normalized["opposing_account_iban"]
+        and csv_row["transaction_type"] in BANK_COUNTERPARTY_TRANSACTION_TYPES
+    ):
+        normalized["opposing_account_name"] = BANK_COUNTERPARTY_NAME
 
     # column_description &| details.description &| column_structured_ref &| details_structured_ref -> description
     if details["no_description"] and (column_description or details["description"]):

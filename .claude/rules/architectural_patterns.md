@@ -25,7 +25,7 @@ ordered sequence. Each phase must succeed before the next begins:
    `normalize_row` → write temp output.
 7. **Outcome classification** — `success` / `partial` / `all_failed` /
    `all_full_duplicates` / `structure_failed` / `error`.
-8. **Finalize** — single exit path for all file moves, index commit, email
+8. **Finalize** — single exit path for all file moves, index commit, alert
    (`finalize` in [engine/core/completion.py](../../engine/core/completion.py)).
 
 ## 2. Single Exit Path (`completion.finalize`)
@@ -33,7 +33,7 @@ ordered sequence. Each phase must succeed before the next begins:
 `finalize()` is the **only** place that calls `sys.exit()`. Every code path
 (normal, error, structure failure, row-level failure) calls it, guaranteeing
 that file moves, index commits, writer cleanup, backup rotation, temp cleanup,
-and email always happen together. Outcomes map 1:1 to exit codes and
+and the failure alert always happen together. Outcomes map 1:1 to exit codes and
 destination subdirectories — see the step-numbered blocks inside `finalize`.
 
 ## 3. Configuration-Driven Bank Support
@@ -144,7 +144,7 @@ The step-numbered blocks inside `finalize()` in
 
 - **Non-critical** (wrap in try/except, log, continue): duplicate-index
   prep, backup rotation, temp cleanup, logging itself.
-- **Critical** (attempt compensating move, email, exit): original CSV move
+- **Critical** (attempt compensating move, alert, exit): original CSV move
   (exit 94), duplicate-index commit (93), normalized output move (92),
   duplicate-index prep (97).
 - **Catastrophic** (exit 99): unhandled exception anywhere in the pipeline.
@@ -178,12 +178,15 @@ and consumed by `build_paths` in [engine/core/csv_runtime.py](../../engine/core/
 [bank-csv-normalizer.bash](../../bank-csv-normalizer.bash) guards unattended execution:
 
 - Sets `PYTHONPATH` and `cd`s into `BASE_DIR` (cron has no defaults).
-- Single lockfile (`.process.lock`) with `trap cleanup INT TERM EXIT` so
-  crashed runs cannot leave the lock behind.
+- Exclusive `flock` on `.process.lock` for the whole run (normalizer and
+  importer); a second instance exits at once, and the kernel drops the lock
+  when the process dies, so a crash or reboot cannot leave a stale lock.
 - **Size-stability check** — `stat` twice with a 2s sleep; skip if the file
   is still growing (defends against partial SFTP uploads).
 - Exit codes `0/65/75/99` are "Python handled it"; anything else triggers a
   fallback move of the incoming file to `data/failed/`.
+- Runs every minute; alerts go to stderr, which the TrueNAS cron job emails.
+  Success is silent.
 
 ## 12. Naming Conventions
 
@@ -193,3 +196,27 @@ prefixes to make the origin obvious in reconciliation blocks —
 values extracted from the free-text `details` column, `normalized_*` for
 final output fields. Names reflect meaning and purpose; no abbreviations
 except common ones (IBAN, BIC, CSV).
+
+## 13. Firefly III Import Stage
+
+[engine/firefly/import_normalized.py](../../engine/firefly/import_normalized.py)
+runs after the normalizer loop and turns every row in `data/normalized/` into
+one `POST /api/v1/transactions`.
+
+- **Idempotent** — `error_if_duplicate_hash` makes a re-import of the same
+  row "already present". Firefly's check includes deleted transactions:
+  purge (`DELETE /api/v1/data/purge`) after deleting, before re-importing.
+- **Firefly state read per run** — asset accounts by IBAN, existing transfers
+  for matching. Nothing about Firefly is configured in this repo.
+- **Own transfers: match or create** — both accounts' CSVs carry the same
+  movement; the first side creates the transfer, the other claims it
+  (`claim_transfer`: same accounts, amount, ±`TRANSFER_MATCH_DAYS`, one claim
+  per side). Robust to file order and unequal history coverage.
+- **Run-level vs row-level failure** — `FireflyAuthError` /
+  `FireflyUnavailableError` ([engine/firefly/api.py](../../engine/firefly/api.py))
+  stop the run and leave files in place, alerted once per outage via
+  `data/firefly-import-blocked.flag`; any other rejection fails only that row
+  (to `data/failed/<ts>-<name>-import-failed.csv`) and the file moves to
+  `data/imported/` with an `-import-partial` suffix.
+- **Dry run** — `--dry-run` runs the same decisions (including simulated
+  transfer claims) without sending or moving anything.

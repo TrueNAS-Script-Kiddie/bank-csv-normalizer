@@ -17,15 +17,10 @@ export PYTHONPATH="${BASE_DIR}"
 # Ensure working directory is the project root (cron starts in /)
 cd "${BASE_DIR}" || exit 1
 
-# Always remove lockfile, even on crash
-cleanup() {
-	rm -f "${LOCKFILE_PATH}"
-}
-trap cleanup INT TERM EXIT
-
-# Prevent double runs
-[[ -e "${LOCKFILE_PATH}" ]] && exit 0
-touch "${LOCKFILE_PATH}"
+# Prevent double runs. The kernel releases the flock when this process ends,
+# so a crash or reboot cannot leave a stale lock behind.
+exec 9>"${LOCKFILE_PATH}"
+flock -n 9 || exit 0
 
 for FILE_PATH in "${IN_DIR}"/*.csv; do
 	FILENAME="$(basename "${FILE_PATH}")"
@@ -69,3 +64,8 @@ for FILE_PATH in "${IN_DIR}"/*.csv; do
 		;;
 	esac
 done
+
+# Import everything in data/normalized/ into Firefly III. Still under the flock,
+# so a long import never overlaps the next cron run. The importer alerts on
+# stderr itself and is silent when there is nothing to do.
+python3 -m engine.firefly.import_normalized

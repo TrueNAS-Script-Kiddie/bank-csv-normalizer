@@ -10,12 +10,11 @@ This module contains only small, infrastructure-level helpers that:
 Functions included:
 - log_event: append timestamped log entries
 - load_env: minimal .env key=value loader
-- send_email: send notifications via system sendmail (TrueNAS compatible)
+- alert: write failure notifications to stderr (cron emails them)
 """
 
-import json
 import os
-import subprocess
+import sys
 from datetime import datetime
 
 
@@ -73,44 +72,19 @@ def load_env(path: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Email via system sendmail (TrueNAS compatible)
+# Alert via stderr
 # ---------------------------------------------------------------------------
-def send_email(subject: str, body: str, log_event, logfile_path: str) -> None:
+def alert(subject: str, body: str) -> None:
     """
-    Send an email through TrueNAS using midclt.
-
-    The subject is flattened and truncated to avoid validation errors.
-    The body is truncated to stay within TrueNAS mail API limits.
+    Write an alert to stderr. The TrueNAS cron job (Hide Standard Error off)
+    emails anything on stderr, so success must stay silent.
     """
-
-    try:
-        # Sanitize subject: no newlines, no control chars, safe length
-        clean_subject = str(subject).replace("\n", " ").replace("\r", " ")
-        clean_subject = clean_subject[:180]
-
-        # Sanitize body: keep it large enough but within safe limits
-        clean_body = str(body)[:8000]
-
-        payload = {
-            "subject": clean_subject,
-            "text": clean_body,
-        }
-
-        json_arg = json.dumps(payload)
-
-        # Call midclt in argv mode (no shell, no quoting issues)
-        subprocess.run(
-            ["/usr/bin/midclt", "call", "mail.send", json_arg],
-            capture_output=True,
-            text=True,
-        )
-
-    except Exception as exc:
-        log_event(logfile_path, f"[EMAIL ERROR] {exc!r}")
+    print(f"{subject}\n{body}\n", file=sys.stderr, flush=True)
 
 
 # ---------------------------------------------------------------------------
 # Global config (loaded once)
 # ---------------------------------------------------------------------------
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Project root: engine/core/runtime.py -> three levels up
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONFIG = load_env(os.path.join(BASE_DIR, "config", "app.env"))

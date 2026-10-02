@@ -65,6 +65,20 @@ def parse_ddmmyyyy(
     raise ValueError(f"Invalid date format: {value}")
 
 
+def parse_ddmmyyyy_time(date_value: str, time_value: str | None) -> str:
+    """
+    Parse 'dd/mm/yyyy' plus optional 'HH:MM' / 'HH U MM' into 'YYYY-MM-DD[ HH:MM]'.
+    No time means unknown, so none is invented.
+    """
+    iso_date = parse_ddmmyyyy(date_value.strip())
+    time_value = (time_value or "").replace(" U ", ":").strip()
+    if not time_value:
+        return iso_date
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", time_value):
+        raise ValueError(f"Invalid time format: {time_value}")
+    return f"{iso_date} {time_value}"
+
+
 def canonicalize_structured_ref(raw: str) -> str:
     digits = re.sub(r"\D", "", raw)
     if len(digits) != 12:
